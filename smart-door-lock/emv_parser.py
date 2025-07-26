@@ -51,7 +51,7 @@ class EMVTags:
     CURRENCY_CODE = 0x9F42
 
 
-# Default PDOL values (similar to Flipper implementation)
+# Default PDOL values (matching Flipper implementation exactly)
 PDOL_DEFAULT_VALUES = {
     0x9F59: bytes([0xC8, 0x80, 0x00]),  # Terminal transaction information
     0x9F5A: bytes([0x00]),  # Terminal transaction type
@@ -61,6 +61,7 @@ PDOL_DEFAULT_VALUES = {
     0x9F02: bytes([0x00, 0x00, 0x00, 0x10, 0x00, 0x00]),  # Amount, authorised
     0x9F03: bytes([0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),  # Amount, other
     0x9F1A: bytes([0x01, 0x24]),  # Terminal country code
+    0x9F1D: bytes([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),  # Terminal risk management data
     0x5F2A: bytes([0x01, 0x24]),  # Transaction currency code
     0x95: bytes([0x00, 0x00, 0x00, 0x00, 0x00]),  # Terminal verification results
     0x9A: bytes([0x19, 0x01, 0x01]),  # Transaction date
@@ -176,6 +177,10 @@ class EMVParser:
                 # Application Transaction Counter
                 if length >= 2:
                     return (data[0] << 8) | data[1]
+
+            elif tag == EMVTags.PDOL:
+                # Processing Options Data Object List - return as raw bytes
+                return data[:length]
 
             else:
                 # Unknown tag - return raw hex
@@ -316,14 +321,20 @@ class EMVParser:
         parsed = self.decode_response_tlv(tlv_data)
         if EMVTags.PDOL in parsed:
             pdol_data = parsed[EMVTags.PDOL]
-            if isinstance(pdol_data, bytes):
+            if isinstance(pdol_data, str):
+                # Convert hex string back to bytes
+                return bytes.fromhex(pdol_data)
+            elif isinstance(pdol_data, bytes):
                 return pdol_data
         return b""
 
     def prepare_pdol_data(self, pdol: bytes) -> bytes:
         """
         Prepare PDOL data for GET PROCESSING OPTIONS command
-        Based on emv_prepare_pdol implementation
+        Based on emv_prepare_pdol implementation from C code
+        
+        PDOL format: tag1 length1 tag2 length2 ...
+        We need to prepare data values for each tag/length pair
         """
         if not pdol:
             return b""
@@ -331,20 +342,32 @@ class EMVParser:
         result = b""
         offset = 0
 
+        print(f"DEBUG: PDOL bytes: {pdol.hex().upper()}")
+
         while offset < len(pdol):
-            # Parse tag and length from PDOL
-            tag, length, new_offset = self.parse_tag(pdol, offset)
-            if tag == 0:
-                break
-
-            offset = new_offset
-
-            # Get length (should be 1 byte for PDOL)
             if offset >= len(pdol):
                 break
-
+                
+            # Parse tag manually for PDOL structure
+            first_byte = pdol[offset]
+            
+            # Check if 2-byte tag
+            if (first_byte & 0x1F) == 0x1F:  # 2-byte tag
+                if offset + 1 >= len(pdol):
+                    break
+                tag = (pdol[offset] << 8) | pdol[offset + 1]
+                offset += 2
+            else:  # 1-byte tag
+                tag = pdol[offset]
+                offset += 1
+            
+            # Get data length (next byte)
+            if offset >= len(pdol):
+                break
             data_length = pdol[offset]
             offset += 1
+            
+            print(f"DEBUG: Tag: 0x{tag:04X}, Length: {data_length}")
 
             # Find matching value in our defaults
             if tag in PDOL_DEFAULT_VALUES:
@@ -354,8 +377,11 @@ class EMVParser:
                     result += value[:data_length]
                 else:
                     result += value + b"\x00" * (data_length - len(value))
+                print(f"DEBUG: Added {len(value[:data_length])} bytes for tag 0x{tag:04X}")
             else:
                 # Unknown tag, fill with zeros
                 result += b"\x00" * data_length
+                print(f"DEBUG: Added {data_length} zero bytes for unknown tag 0x{tag:04X}")
 
+        print(f"DEBUG: Final PDOL data length: {len(result)}")
         return result
