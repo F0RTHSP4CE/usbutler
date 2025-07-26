@@ -1,0 +1,17 @@
+{
+    "4111111111111111": {
+        "name": "John Doe",
+        "access_level": "admin",
+        "active": true
+    },
+    "5555555555554444": {
+        "name": "Jane Smith",
+        "access_level": "user",
+        "active": true
+    },
+    "5167942120124616": {
+        "name": "Mike Wentson",
+        "access_level": "admin",
+        "active": true
+    }
+}

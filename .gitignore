@@ -1,1 +1,10 @@
 unleashed-firmware*/
+venv/
+.venv/
+
+# python
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
