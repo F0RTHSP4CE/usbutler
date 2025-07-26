@@ -61,7 +61,9 @@ PDOL_DEFAULT_VALUES = {
     0x9F02: bytes([0x00, 0x00, 0x00, 0x10, 0x00, 0x00]),  # Amount, authorised
     0x9F03: bytes([0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),  # Amount, other
     0x9F1A: bytes([0x01, 0x24]),  # Terminal country code
-    0x9F1D: bytes([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),  # Terminal risk management data
+    0x9F1D: bytes(
+        [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+    ),  # Terminal risk management data
     0x5F2A: bytes([0x01, 0x24]),  # Transaction currency code
     0x95: bytes([0x00, 0x00, 0x00, 0x00, 0x00]),  # Terminal verification results
     0x9A: bytes([0x19, 0x01, 0x01]),  # Transaction date
@@ -332,7 +334,7 @@ class EMVParser:
         """
         Prepare PDOL data for GET PROCESSING OPTIONS command
         Based on emv_prepare_pdol implementation from C code
-        
+
         PDOL format: tag1 length1 tag2 length2 ...
         We need to prepare data values for each tag/length pair
         """
@@ -347,10 +349,10 @@ class EMVParser:
         while offset < len(pdol):
             if offset >= len(pdol):
                 break
-                
+
             # Parse tag manually for PDOL structure
             first_byte = pdol[offset]
-            
+
             # Check if 2-byte tag
             if (first_byte & 0x1F) == 0x1F:  # 2-byte tag
                 if offset + 1 >= len(pdol):
@@ -360,13 +362,13 @@ class EMVParser:
             else:  # 1-byte tag
                 tag = pdol[offset]
                 offset += 1
-            
+
             # Get data length (next byte)
             if offset >= len(pdol):
                 break
             data_length = pdol[offset]
             offset += 1
-            
+
             print(f"DEBUG: Tag: 0x{tag:04X}, Length: {data_length}")
 
             # Find matching value in our defaults
@@ -377,11 +379,15 @@ class EMVParser:
                     result += value[:data_length]
                 else:
                     result += value + b"\x00" * (data_length - len(value))
-                print(f"DEBUG: Added {len(value[:data_length])} bytes for tag 0x{tag:04X}")
+                print(
+                    f"DEBUG: Added {len(value[:data_length])} bytes for tag 0x{tag:04X}"
+                )
             else:
                 # Unknown tag, fill with zeros
                 result += b"\x00" * data_length
-                print(f"DEBUG: Added {data_length} zero bytes for unknown tag 0x{tag:04X}")
+                print(
+                    f"DEBUG: Added {data_length} zero bytes for unknown tag 0x{tag:04X}"
+                )
 
         print(f"DEBUG: Final PDOL data length: {len(result)}")
         return result

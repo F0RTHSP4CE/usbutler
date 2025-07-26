@@ -10,8 +10,23 @@
         "active": true
     },
     "5167942120124616": {
-        "name": "Mike Wentson",
+        "name": "black metal revolut",
         "access_level": "admin",
+        "active": true
+    },
+    "5168830745307428": {
+        "name": "white estonian lhv",
+        "access_level": "user",
+        "active": true
+    },
+    "5355594099615314": {
+        "name": "apple pay revolut 8192",
+        "access_level": "user",
+        "active": true
+    },
+    "4164100070540242": {
+        "name": "apple pay credo",
+        "access_level": "user",
         "active": true
     }
 }
