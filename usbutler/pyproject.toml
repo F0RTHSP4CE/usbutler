@@ -1,0 +1,20 @@
+[project]
+name = "usbutler"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyscard>=2.2.2",
+    "flask>=3.0.0",
+    "pigpio>=1.78",
+]
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "isort>=6.0.1",
+    "mypy>=1.17.0",
+    "pytest>=8.4.1",
+    "ruff>=0.12.5",
+]

@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>USB Butler · User Management</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+      crossorigin="anonymous"
+    />
+  </head>
+  <body class="bg-light" data-reader-enabled="{{ 'true' if reader_enabled else 'false' }}">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+      <div class="container-fluid">
+        <span class="navbar-brand fw-semibold">USB Butler</span>
+      </div>
+    </nav>
+
+    <main class="container py-4">
+      <div class="row g-4">
+        <div class="col-lg-8">
+          <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <h5 class="mb-0">Registered Users</h5>
+              <span class="badge bg-primary" id="stats-badge" data-active="{{ stats.active }}" data-total="{{ stats.total }}">{{ stats.active }} active / {{ stats.total }} total</span>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-hover align-middle mb-0" id="users-table">
+                <thead class="table-light">
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Cards</th>
+                    <th scope="col">Access</th>
+                    <th scope="col">Status</th>
+                    <th class="text-end" scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="users-table-body">
+                  {% for user in users %}
+                  <tr data-user-id="{{ user.user_id }}" class="{% if not user.active %}table-secondary{% endif %}">
+                    <td>
+                      <div class="fw-semibold">{{ user.name }}</div>
+                      <div class="small text-muted text-uppercase">{{ user.access_level }}</div>
+                    </td>
+                    <td>
+                      {% if user.identifiers %}
+                      {% for identifier in user.identifiers %}
+                      <div class="identifier-entry mb-2" data-identifier="{{ identifier.value }}">
+                        <span class="badge bg-info-subtle text-dark me-2">{{ identifier.type }}{% if identifier.primary %} · Primary{% endif %}</span>
+                        <span class="sensitive text-monospace">
+                          <span class="masked">{{ identifier.masked }}</span>
+                          <span class="full d-none">{{ identifier.value }}</span>
+                        </span>
+                        <button class="btn btn-link btn-sm px-1 toggle-sensitive" type="button">Show</button>
+                        {% if not identifier.primary %}
+                        <button
+                          class="btn btn-link btn-sm px-1 set-primary"
+                          type="button"
+                          data-user-id="{{ user.user_id }}"
+                          data-identifier="{{ identifier.value }}"
+                        >Make primary</button>
+                        {% endif %}
+                        {% if user.identifiers|length > 1 %}
+                        <button
+                          class="btn btn-link btn-sm px-1 text-danger remove-identifier"
+                          type="button"
+                          data-user-id="{{ user.user_id }}"
+                          data-identifier="{{ identifier.value }}"
+                        >Remove</button>
+                        {% endif %}
+                      </div>
+                      {% endfor %}
+                      {% else %}
+                      <span class="text-muted">No identifiers</span>
+                      {% endif %}
+                    </td>
+                    <td class="text-capitalize">{{ user.access_level }}</td>
+                    <td>
+                      {% if user.active %}
+                      <span class="badge bg-success">Active</span>
+                      {% else %}
+                      <span class="badge bg-secondary">Inactive</span>
+                      {% endif %}
+                    </td>
+                    <td class="text-end">
+                      <div class="btn-group btn-group-sm" role="group">
+                        <button
+                          class="btn btn-outline-secondary toggle-user"
+                          type="button"
+                          data-user-id="{{ user.user_id }}"
+                        >
+                          {% if user.active %}Deactivate{% else %}Activate{% endif %}
+                        </button>
+                        <button
+                          class="btn btn-outline-danger remove-user"
+                          type="button"
+                          data-user-id="{{ user.user_id }}"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {% else %}
+                  <tr>
+                    <td colspan="5" class="text-center py-4 text-muted">
+                      No users registered yet.
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-4">
+          <div
+            class="card shadow-sm mb-4"
+            id="reader-control-card"
+            data-initial-reader-state='{{ reader_state | tojson }}'
+          >
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <h5 class="mb-0">Reader control</h5>
+              <span class="badge bg-secondary" id="reader-owner-badge">—</span>
+            </div>
+            <div class="card-body">
+              <p class="small text-muted mb-3" id="reader-status-message">
+                Checking reader ownership…
+              </p>
+              <div class="d-grid gap-2 mb-3">
+                <button class="btn btn-outline-primary" type="button" id="claim-reader-btn">
+                  Unlock reader for web
+                </button>
+                <button class="btn btn-outline-secondary" type="button" id="release-reader-btn">
+                  Return reader to door
+                </button>
+              </div>
+              <div class="small text-muted" id="reader-updated-at"></div>
+            </div>
+          </div>
+
+          <div class="card shadow-sm">
+            <div class="card-header">
+              <h5 class="mb-0">Add New User</h5>
+            </div>
+            <div class="card-body">
+              <div class="mb-3">
+                <label class="form-label">Step 1: Scan Card</label>
+                <div class="d-grid gap-2">
+                  <button class="btn btn-primary" id="scan-card-btn" type="button">
+                    <span class="default-label">Scan card</span>
+                    <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                  </button>
+                </div>
+                <div class="small text-muted mt-2" id="scan-status">Waiting for scan…</div>
+              </div>
+
+              <form id="add-user-form" novalidate>
+                <div class="mb-3">
+                  <label class="form-label">Identifier</label>
+                  <div class="input-group">
+                    <input
+                      type="password"
+                      class="form-control"
+                      id="identifier"
+                      name="identifier"
+                      placeholder="Tap a card to populate"
+                      readonly
+                      required
+                    />
+                    <button class="btn btn-outline-secondary toggle-identifier" type="button" disabled>
+                      Show
+                    </button>
+                  </div>
+                  <div class="form-text" id="identifier-type">Identifier type: —</div>
+                </div>
+                <div class="mb-3">
+                  <label for="card-meta" class="form-label">Card details</label>
+                  <div class="card border-0 bg-light" id="card-meta">
+                    <div class="card-body py-2 small text-muted">
+                      Scan a card to view details.
+                    </div>
+                  </div>
+                </div>
+                <div class="alert alert-warning d-none" id="existing-user-alert"></div>
+
+                <div class="mb-3">
+                  <label class="form-label">Assign to</label>
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="assign-mode" id="assign-new" value="new" checked />
+                    <label class="form-check-label" for="assign-new">Create new user</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="assign-mode" id="assign-existing" value="existing" />
+                    <label class="form-check-label" for="assign-existing">Attach to existing user</label>
+                  </div>
+                </div>
+
+                <div class="mb-3" id="new-user-fields">
+                  <label for="name" class="form-label">Name</label>
+                  <input type="text" class="form-control" id="name" name="name" required />
+                </div>
+                <div class="mb-3" id="access-level-field">
+                  <label for="access_level" class="form-label">Access level</label>
+                  <select class="form-select" id="access_level" name="access_level">
+                    <option value="user" selected>User</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+
+                <div class="mb-3 d-none" id="existing-user-select-wrapper">
+                  <label for="existing_user" class="form-label">Select user</label>
+                  <select class="form-select" id="existing_user" name="existing_user" disabled>
+                    <option value="">Choose a user…</option>
+                  </select>
+                  <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="make_primary" name="make_primary" />
+                    <label class="form-check-label" for="make_primary">Make this the primary card</label>
+                  </div>
+                </div>
+
+                <div class="d-grid">
+                  <button class="btn btn-success" type="submit" id="submit-btn" disabled>Add card</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <div class="card shadow-sm mt-4">
+            <div class="card-header">
+              <h6 class="mb-0">Last scan</h6>
+            </div>
+            <div class="card-body" id="last-scan-panel">
+              {% if last_scan %}
+              <p class="mb-1 text-muted">
+                {{ last_scan.identifier_type }}: <span class="text-monospace">{{ last_scan.masked_identifier }}</span>
+              </p>
+              {% if last_scan.existing_user_name %}
+              <p class="mb-0">Linked to <strong>{{ last_scan.existing_user_name }}</strong>.</p>
+              {% else %}
+              <p class="mb-0">Card not yet assigned.</p>
+              {% endif %}
+              {% else %}
+              <p class="mb-0 text-muted">No scans yet.</p>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

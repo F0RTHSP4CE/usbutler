@@ -1,0 +1,75 @@
+{
+  "version": 2,
+  "users": {
+    "c261a51c-0605-40d9-ae39-140b7f99742d": {
+      "name": "John Doe",
+      "access_level": "admin",
+      "active": true,
+      "identifiers": [
+        {
+          "value": "4111111111111111",
+          "type": "PAN",
+          "primary": true
+        }
+      ]
+    },
+    "a8fda5c3-ceaf-43de-8d46-bade6a770ce1": {
+      "name": "Jane Smith",
+      "access_level": "user",
+      "active": true,
+      "identifiers": [
+        {
+          "value": "5555555555554444",
+          "type": "PAN",
+          "primary": true
+        }
+      ]
+    },
+    "10666325-0557-4f41-b3a9-9fd4a8d0cca2": {
+      "name": "rozetkin",
+      "access_level": "admin",
+      "active": true,
+      "identifiers": [
+        {
+          "value": "2200700607540902",
+          "type": "PAN",
+          "primary": true
+        }
+      ]
+    },
+    "b79d01f6-92c5-4635-afe6-378dad73adfa": {
+      "name": "Rozetkin (APPLE PAY)",
+      "access_level": "user",
+      "active": true,
+      "identifiers": [
+        {
+          "value": "5599124393842103",
+          "type": "PAN",
+          "primary": true
+        }
+      ]
+    },
+    "48d95afb-fe60-4055-91a8-4103cb5231d8": {
+      "name": "roz",
+      "access_level": "user",
+      "active": true,
+      "identifiers": [
+        {
+          "value": "044F255A467880",
+          "type": "UID",
+          "primary": true
+        },
+        {
+          "value": "90C31317",
+          "type": "UID",
+          "primary": false
+        },
+        {
+          "value": "04773302347980",
+          "type": "UID",
+          "primary": false
+        }
+      ]
+    }
+  }
+}

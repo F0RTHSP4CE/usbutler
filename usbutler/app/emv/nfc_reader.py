@@ -4,7 +4,9 @@ Handles EMV card communication using PC/SC protocol.
 """
 
 import time
+import threading
 from typing import Optional, List, Tuple
+
 from smartcard.System import readers
 from smartcard.CardConnection import CardConnection
 from smartcard.util import toHexString, toBytes
@@ -17,62 +19,127 @@ class NFCReader:
     def __init__(self):
         self.connection: Optional[CardConnection] = None
         self.reader = None
-
-    def connect(self) -> bool:
-        """Connect to the first available PC/SC reader"""
-        try:
-            reader_list = readers()
-            if not reader_list:
-                print("No PC/SC readers found")
-                return False
-
-            # Use the first available reader
-            self.reader = reader_list[0]
-            print(f"Found reader: {self.reader}")
-
-            # Try to connect to a card
-            self.connection = self.reader.createConnection()
-            self.connection.connect()
-            print("Connected to card")
-            return True
-
-        except Exception as e:
-            print(f"Failed to connect to reader: {e}")
-            return False
+        self.reader_name: Optional[str] = None
+        self._last_reader_snapshot: Optional[Tuple[str, ...]] = None
+        self._io_lock = threading.RLock()
+        self._pause_condition = threading.Condition()
 
     def disconnect(self):
         """Disconnect from the card and reader"""
-        if self.connection:
-            try:
-                self.connection.disconnect()
-            except:
-                pass
-            self.connection = None
+        with self._io_lock:
+            if self.connection:
+                try:
+                    self.connection.disconnect()
+                except:
+                    pass
+                self.connection = None
+            self.reader = None
+            self.reader_name = None
+        with self._pause_condition:
+            self._pause_condition.notify_all()
+
+    def _refresh_readers(self) -> bool:
+        """Refresh the reader list and check for available readers"""
+        try:
+            with self._io_lock:
+                reader_list = readers()
+                reader_names = tuple(str(reader) for reader in reader_list)
+
+            if not reader_list:
+                if self._last_reader_snapshot != ():
+                    print("No card readers found. Make sure the USB card reader is connected.")
+                self._last_reader_snapshot = ()
+                return False
+
+            if self._last_reader_snapshot != reader_names:
+                print(f"Found {len(reader_list)} reader(s):")
+                for i, reader in enumerate(reader_list):
+                    print(f"  {i}: {reader}")
+
+            self._last_reader_snapshot = reader_names
+            return True
+        except Exception as e:
+            print(f"Error refreshing readers: {e}")
+            return False
+
+    def _connect_to_reader(self, reader) -> bool:
+        """Attempt to connect to the provided reader. Returns True when a card is present."""
+        try:
+            with self._io_lock:
+                connection = reader.createConnection()
+                try:
+                    connection.connect(CardConnection.T1_protocol)
+                except Exception:
+                    try:
+                        connection.connect(CardConnection.T0_protocol)
+                    except Exception:
+                        connection.connect()
+
+                self.connection = connection
+                self.reader = reader
+                self.reader_name = str(reader)
+            print(f"Card detected on reader: {self.reader_name}")
+            with self._pause_condition:
+                self._pause_condition.notify_all()
+            return True
+        except (CardConnectionException, NoCardException):
+            return False
+
+    def _attempt_reconnect(self) -> bool:
+        """Try to re-establish a connection after a transient failure."""
+        with self._io_lock:
+            reader_list = readers()
+
+        # Prefer the previously used reader if we know its name.
+        if self.reader_name:
+            for reader in reader_list:
+                if str(reader) == self.reader_name and self._connect_to_reader(reader):
+                    return True
+
+        # Fallback to any available reader.
+        for reader in reader_list:
+            if str(reader) == self.reader_name:
+                continue
+            if self._connect_to_reader(reader):
+                return True
+
+        return False
 
     def wait_for_card(self, timeout: int = 30) -> bool:
         """Wait for a card to be present"""
         print("Waiting for card...")
-        start_time = time.time()
+        start_time = time.monotonic()
 
-        while time.time() - start_time < timeout:
+        while True:
+            elapsed = time.monotonic() - start_time
+            if elapsed >= timeout:
+                print("Timeout waiting for card")
+                return False
+            remaining = timeout - elapsed
             try:
-                reader_list = readers()
-                if reader_list:
-                    self.reader = reader_list[0]
-                    self.connection = self.reader.createConnection()
-                    self.connection.connect()
-                    print("Card detected!")
-                    return True
+                # Refresh readers list each time to detect reconnected devices
+                if not self._refresh_readers():
+                    self._timed_pause(min(remaining, 1.0))
+                    continue
+
+                with self._io_lock:
+                    reader_list = readers()
+                for reader in reader_list:
+                    if self._connect_to_reader(reader):
+                        return True
             except (CardConnectionException, NoCardException):
-                time.sleep(0.5)
+                # Reader found but no card present
+                self._timed_pause(min(remaining, 0.5))
                 continue
             except Exception as e:
                 print(f"Error waiting for card: {e}")
-                time.sleep(0.5)
+                print("This might indicate the USB card reader was disconnected.")
+                self._timed_pause(min(remaining, 2.0))
                 continue
 
-        print("Timeout waiting for card")
-        return False
+    def is_connected(self) -> bool:
+        """Check if we have an active connection to a card"""
+        return self.connection is not None
 
     def send_apdu(self, apdu: List[int]) -> Tuple[List[int], int, int]:
         """
@@ -82,12 +149,58 @@ class NFCReader:
         if not self.connection:
             raise Exception("Not connected to card")
 
-        try:
-            response, sw1, sw2 = self.connection.transmit(apdu)
-            return response, sw1, sw2
-        except Exception as e:
-            print(f"APDU transmission error: {e}")
-            raise
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            with self._io_lock:
+                connection = self.connection
+
+            if connection is None:
+                if not self._attempt_reconnect():
+                    print("Failed to reconnect after APDU error: no readers available")
+                    if attempt == max_retries:
+                        raise Exception("APDU transmission failed: connection unavailable")
+                    self._timed_pause(0.1)
+                    continue
+
+                with self._io_lock:
+                    connection = self.connection
+
+                if connection is None:
+                    if attempt == max_retries:
+                        raise Exception("APDU transmission failed: connection unavailable")
+                    self._timed_pause(0.1)
+                    continue
+
+            try:
+                with self._io_lock:
+                    response, sw1, sw2 = connection.transmit(apdu)
+                return response, sw1, sw2
+
+            except CardConnectionException as e:
+                # Transient transport/protocol error - try to reconnect and retry
+                print(f"APDU transmission error (attempt {attempt}): {e}")
+                # Disconnect and attempt to re-establish connection
+                self.disconnect()
+                self._timed_pause(0.05)
+                continue
+
+            except Exception as e:
+                # Non-CardConnectionException - treat as fatal after retries
+                print(f"APDU transmission error (attempt {attempt}): {e}")
+                self.disconnect()
+                if attempt == max_retries:
+                    raise
+                self._timed_pause(0.1)
+                continue
+
+        # If we get here, all retries failed
+        raise Exception("APDU transmission failed after retries")
+
+    def _timed_pause(self, duration: float):
+        if duration <= 0:
+            return
+        with self._pause_condition:
+            self._pause_condition.wait(timeout=duration)
 
     def select_ppse(self) -> Optional[bytes]:
         """
@@ -163,6 +276,23 @@ class NFCReader:
                 return bytes(response)
             else:
                 print(f"GET PROCESSING OPTIONS failed: {sw1:02X} {sw2:02X}")
+
+                # If card says INS not supported (6D00), try with empty PDOL as fallback
+                if sw1 == 0x6D and sw2 == 0x00 and pdol_data:
+                    print("Card returned 6D00 for GPO with PDOL - trying empty PDOL fallback")
+                    try:
+                        empty_apdu = [0x80, 0xA8, 0x00, 0x00, 0x02, 0x83, 0x00, 0x00]
+                        response2, sw1b, sw2b = self.send_apdu(empty_apdu)
+                        if sw1b == 0x90 and sw2b == 0x00:
+                            print("GET PROCESSING OPTIONS successful with empty PDOL")
+                            return bytes(response2)
+                        else:
+                            print(f"Fallback GPO failed: {sw1b:02X} {sw2b:02X}")
+                            return None
+                    except Exception as e2:
+                        print(f"Fallback GPO error: {e2}")
+                        return None
+
                 return None
 
         except Exception as e:
