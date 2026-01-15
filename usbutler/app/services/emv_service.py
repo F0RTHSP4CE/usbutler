@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from smartcard.util import toHexString
+import time
 
 from app.emv.nfc_reader import NFCReader
 
@@ -392,9 +393,13 @@ class CardScanResult:
 class EMVCardService:
     """Service for reading NFC cards and extracting stable identifiers."""
 
-    def __init__(self, nfc_reader: Optional[NFCReader] = None):
+    def __init__(self, nfc_reader: Optional[NFCReader] = None, use_acr122_proprietary: bool = False):
         self.nfc_reader = nfc_reader or NFCReader()
         self.last_scan: Optional[CardScanResult] = None
+        # watchdog to detect stalls during EMV probing
+        self._last_progress_time: Optional[float] = None
+        self._progress_timeout = 4.0
+        self._use_acr122_proprietary = bool(use_acr122_proprietary)
 
     def _ensure_connection(self, timeout: int = 3) -> bool:
         if self.nfc_reader.is_connected():
@@ -443,6 +448,7 @@ class EMVCardService:
         atr_card_type = identify_card_type(parsed_atr)
 
         uid_hex = self._get_uid()
+        self._mark_progress()
 
         result = CardScanResult(
             pan=None,
@@ -477,6 +483,7 @@ class EMVCardService:
 
         for name in (ppse, pse):
             data, sw1, sw2 = self._select_name(name)
+            self._mark_progress()
             print(
                 f"SELECT {name.decode('ascii', errors='ignore')} -> SW={sw1:02X}{sw2:02X} DATA={to_hex(data)}"
             )
@@ -523,8 +530,10 @@ class EMVCardService:
         selected_aid: Optional[bytes] = None
 
         for aid in candidate_aids:
+            self._check_progress_timeout()
             print(f"Trying AID {toHexString(list(aid))} ...")
             data, sw1, sw2 = self._select_application(aid)
+            self._mark_progress()
             print(f"  SELECT -> SW={sw1:02X}{sw2:02X} DATA={to_hex(data)}")
 
             if (sw1, sw2) == (0x67, 0x00):
@@ -539,9 +548,11 @@ class EMVCardService:
 
             for sfi in range(1, 16):
                 for rec in range(1, 8):
+                    self._check_progress_timeout()
                     record = self._read_record(sfi, rec)
                     if record is None:
                         continue
+                    self._mark_progress()
 
                     v5a = find_tag_in_tlv_tree(record, "5A")
                     v57 = find_tag_in_tlv_tree(record, "57")
@@ -602,6 +613,31 @@ class EMVCardService:
         )
 
         return result
+
+    def _mark_progress(self) -> None:
+        try:
+            self._last_progress_time = time.time()
+        except Exception:
+            self._last_progress_time = None
+
+    def _check_progress_timeout(self) -> None:
+        # If no progress observed for _progress_timeout seconds, reset and abort
+        if self._last_progress_time is None:
+            self._mark_progress()
+            return
+        if time.time() - self._last_progress_time > self._progress_timeout:
+            # Attempt to clear the RF field by disconnecting; for ACR122 users may enable proprietary reset
+            try:
+                reader_name = getattr(self.nfc_reader, "reader_name", "") or ""
+                if self._use_acr122_proprietary and "ACR122" in reader_name.upper():
+                    print("⚠️ Progress timeout: attempting ACR122 field reset (proprietary)")
+                    # Best-effort: disconnect will drop RF field; proprietary escape could be added here
+                else:
+                    print("⚠️ Progress timeout: disconnecting reader to reset state")
+                self.nfc_reader.disconnect()
+            except Exception:
+                pass
+            raise RuntimeError("EMV read stalled; reset and aborting current read")
 
     # ------------------------------------------------------------------
     # Internal helpers
