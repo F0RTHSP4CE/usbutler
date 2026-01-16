@@ -4,20 +4,24 @@ from __future__ import annotations
 
 import time
 import threading
+from dataclasses import asdict
 from typing import Callable, Union
 
 from fastapi import APIRouter, Body, Depends, Response, status
 
 from app.services.auth_service import AuthServiceError, User
+from app.services.reader_control import ReaderControl
 from app.web.common import (
     AddUserRequest,
     AuthenticationService,
     EMVCardService,
-    ReaderControl,
+    ReaderControlUpdate,
+    ReaderStateOut,
     ScanErrorResponse,
     ScanRequest,
     ScanResponse,
     ScanSummary,
+    StatsOut,
     SuccessResponse,
     UserErrorResponse,
     UserListResponse,
@@ -26,21 +30,39 @@ from app.web.common import (
     ReaderStateResponse,
     ReaderClaimResponse,
     ReaderReleaseResponse,
-    _build_stats,
     _is_web_reader_enabled,
-    _metadata_to_dict,
-    _serialize_reader_state,
-    _serialize_reader_update,
-    _serialize_user,
     get_auth_service,
     get_emv_service,
     get_last_scan,
-    get_reader_control,
     get_scan_lock,
     set_last_scan,
+    UserOut,
 )
 
 router = APIRouter()
+
+
+def _reader_state_out(reader_control: ReaderControl) -> ReaderStateOut:
+    state = reader_control.get_state()
+    owner = str(state.get("owner") or "door")
+    updated_at = state.get("updated_at")
+    return ReaderStateOut(
+        owner=owner,
+        owned_by_web=owner == "web",
+        owned_by_door=owner == "door",
+        updated_at=updated_at if isinstance(updated_at, (int, float)) else None,
+    )
+
+
+def _reader_update_out(state: dict[str, object]) -> ReaderControlUpdate:
+    owner = str(state.get("owner") or "door")
+    updated_at = state.get("updated_at")
+    previous_owner = state.get("previous_owner")
+    return ReaderControlUpdate(
+        owner=owner,
+        updated_at=updated_at if isinstance(updated_at, (int, float)) else None,
+        previous_owner=str(previous_owner) if previous_owner is not None else None,
+    )
 
 
 def _handle_auth_error(response: Response, exc: AuthServiceError) -> UserErrorResponse:
@@ -56,7 +78,11 @@ def _handle_auth_error(response: Response, exc: AuthServiceError) -> UserErrorRe
     return UserErrorResponse(
         error=exc.code,
         message=exc.message,
-        existing_user=_serialize_user(existing_user) if existing_user else None,
+        existing_user=(
+            UserOut.model_validate(existing_user, from_attributes=True)
+            if existing_user
+            else None
+        ),
     )
 
 
@@ -66,7 +92,7 @@ def _handle_user_action(
     try:
         user = action()
         response.status_code = status.HTTP_200_OK
-        return UserResponse(user=_serialize_user(user))
+        return UserResponse(user=UserOut.model_validate(user, from_attributes=True))
     except AuthServiceError as exc:
         return _handle_auth_error(response, exc)
 
@@ -74,18 +100,20 @@ def _handle_user_action(
 @router.get("/users", response_model=UserListResponse)
 async def api_list_users(
     auth_service: AuthenticationService = Depends(get_auth_service),
-    reader_control_dep: ReaderControl = Depends(get_reader_control),
+    reader_control_dep: ReaderControl = Depends(ReaderControl),
     last_scan: ScanSummary | None = Depends(get_last_scan),
 ) -> UserListResponse:
     users = list(auth_service.list_users().values())
-    serialized = [_serialize_user(user) for user in users]
+    serialized = [UserOut.model_validate(user, from_attributes=True) for user in users]
     serialized.sort(key=lambda item: item.name.lower())
+    total = len(users)
+    active = sum(1 for user in users if user.active)
     return UserListResponse(
         users=serialized,
-        stats=_build_stats(users),
+        stats=StatsOut(total=total, active=active, inactive=total - active),
         last_scan=last_scan,
         reader_enabled=_is_web_reader_enabled(),
-        reader_state=_serialize_reader_state(reader_control_dep),
+        reader_state=_reader_state_out(reader_control_dep),
     )
 
 
@@ -98,7 +126,7 @@ async def api_scan_card(
     payload: ScanRequest = Body(default_factory=ScanRequest),
     auth_service: AuthenticationService = Depends(get_auth_service),
     emv_service: EMVCardService | None = Depends(get_emv_service),
-    reader_control_dep: ReaderControl = Depends(get_reader_control),
+    reader_control_dep: ReaderControl = Depends(ReaderControl),
     scan_lock: threading.Lock = Depends(get_scan_lock),
 ) -> ScanResponse | ScanErrorResponse:
     timeout = payload.timeout if payload.timeout is not None else 15
@@ -158,15 +186,7 @@ async def api_scan_card(
         masked_identifier = (
             identifier if len(identifier) <= 4 else f"****{identifier[-4:]}"
         )
-        metadata = {
-            "issuer": getattr(scan, "issuer", None),
-            "expiry": getattr(scan, "expiry", None),
-            "card_type": getattr(scan, "card_type", None),
-            "tag_type": getattr(scan, "tag_type", None),
-            "atr_hex": getattr(scan, "atr_hex", None),
-            "atr_hex_compact": getattr(scan, "atr_hex_compact", None),
-            "atr_summary": getattr(scan, "atr_summary", None),
-        }
+        metadata = asdict(scan)
         try:
             existing_user = auth_service.find_user_by_identifier_or_raise(identifier)
         except AuthServiceError:
@@ -186,7 +206,11 @@ async def api_scan_card(
             issuer=metadata.get("issuer") if metadata else None,
             expiry=metadata.get("expiry") if metadata else None,
             already_registered=existing_user is not None,
-            existing_user=_serialize_user(existing_user) if existing_user else None,
+            existing_user=(
+                UserOut.model_validate(existing_user, from_attributes=True)
+                if existing_user
+                else None
+            ),
         )
 
         set_last_scan(
@@ -213,10 +237,10 @@ async def api_scan_card(
 
 @router.get("/reader", response_model=ReaderStateResponse)
 async def api_get_reader_state(
-    reader_control_dep: ReaderControl = Depends(get_reader_control),
+    reader_control_dep: ReaderControl = Depends(ReaderControl),
 ) -> ReaderStateResponse:
     return ReaderStateResponse(
-        state=_serialize_reader_state(reader_control_dep),
+        state=_reader_state_out(reader_control_dep),
         reader_enabled=_is_web_reader_enabled(),
     )
 
@@ -224,44 +248,44 @@ async def api_get_reader_state(
 @router.post("/reader/claim", response_model=ReaderClaimResponse)
 async def api_claim_reader(
     response: Response,
-    reader_control_dep: ReaderControl = Depends(get_reader_control),
+    reader_control_dep: ReaderControl = Depends(ReaderControl),
 ) -> ReaderClaimResponse:
     state = reader_control_dep.get_state()
     owner = state.get("owner")
     if owner == "web":
         response.status_code = status.HTTP_200_OK
         return ReaderClaimResponse(
-            state=_serialize_reader_state(reader_control_dep),
+            state=_reader_state_out(reader_control_dep),
             already_owned=True,
         )
     new_state = reader_control_dep.set_owner("web", {"previous_owner": owner})
     response.status_code = status.HTTP_200_OK
     return ReaderClaimResponse(
-        state=_serialize_reader_state(reader_control_dep),
+        state=_reader_state_out(reader_control_dep),
         reader_enabled=_is_web_reader_enabled(),
-        updated=_serialize_reader_update(new_state),
+        updated=_reader_update_out(new_state),
     )
 
 
 @router.post("/reader/release", response_model=ReaderReleaseResponse)
 async def api_release_reader(
     response: Response,
-    reader_control_dep: ReaderControl = Depends(get_reader_control),
+    reader_control_dep: ReaderControl = Depends(ReaderControl),
 ) -> ReaderReleaseResponse:
     state = reader_control_dep.get_state()
     owner = state.get("owner")
     if owner == "door":
         response.status_code = status.HTTP_200_OK
         return ReaderReleaseResponse(
-            state=_serialize_reader_state(reader_control_dep),
+            state=_reader_state_out(reader_control_dep),
             already_released=True,
         )
     new_state = reader_control_dep.reset_to_default()
     response.status_code = status.HTTP_200_OK
     return ReaderReleaseResponse(
-        state=_serialize_reader_state(reader_control_dep),
+        state=_reader_state_out(reader_control_dep),
         reader_enabled=_is_web_reader_enabled(),
-        updated=_serialize_reader_update(new_state),
+        updated=_reader_update_out(new_state),
     )
 
 
@@ -274,13 +298,13 @@ async def api_add_user(
     payload: AddUserRequest = Body(...),
     auth_service: AuthenticationService = Depends(get_auth_service),
 ) -> UserResponse | UserErrorResponse:
-    identifier = (payload.identifier or "").strip()
-    identifier_type = (payload.identifier_type or "UID").strip() or "UID"
-    access_level = (payload.access_level or "user").strip().lower()
-    user_id = (payload.user_id or "").strip() or None
-    make_primary = bool(payload.make_primary)
-    name = (payload.name or "").strip()
-    metadata = _metadata_to_dict(payload.metadata)
+    identifier = payload.identifier or ""
+    identifier_type = payload.identifier_type or "UID"
+    access_level = payload.access_level or "user"
+    user_id = payload.user_id
+    make_primary = payload.make_primary
+    name = payload.name or ""
+    metadata = payload.metadata
 
     if not identifier:
         response.status_code = status.HTTP_400_BAD_REQUEST
@@ -296,7 +320,9 @@ async def api_add_user(
                 metadata,
             )
             response.status_code = status.HTTP_200_OK
-            return UserResponse(user=_serialize_user(updated))
+            return UserResponse(
+                user=UserOut.model_validate(updated, from_attributes=True)
+            )
 
         new_user = auth_service.create_user_or_raise(
             identifier_value=identifier,
@@ -306,7 +332,7 @@ async def api_add_user(
             metadata=metadata,
         )
         response.status_code = status.HTTP_201_CREATED
-        return UserResponse(user=_serialize_user(new_user))
+        return UserResponse(user=UserOut.model_validate(new_user, from_attributes=True))
     except AuthServiceError as exc:
         return _handle_auth_error(response, exc)
 
@@ -389,7 +415,7 @@ async def api_get_user_by_identifier(
     try:
         user = auth_service.find_user_by_identifier_or_raise(value)
         response.status_code = status.HTTP_200_OK
-        return UserResponse(user=_serialize_user(user))
+        return UserResponse(user=UserOut.model_validate(user, from_attributes=True))
     except AuthServiceError as exc:
         return _handle_auth_error(response, exc)
 
@@ -413,7 +439,9 @@ async def api_remove_identifier(
             return RemoveIdentifierResponse(user_removed=True)
         if user is None:
             return RemoveIdentifierResponse(user_removed=True)
-        return RemoveIdentifierResponse(user=_serialize_user(user))
+        return RemoveIdentifierResponse(
+            user=UserOut.model_validate(user, from_attributes=True)
+        )
     except AuthServiceError as exc:
         return _handle_auth_error(response, exc)
 

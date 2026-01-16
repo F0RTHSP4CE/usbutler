@@ -6,18 +6,17 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from app.services.reader_control import ReaderControl
 from app.web.common import (
     _TEMPLATES_DIR,
-    _build_stats,
     _is_web_reader_enabled,
-    _serialize_reader_state,
-    _serialize_user,
+    AuthenticationService,
+    ReaderStateOut,
+    ScanSummary,
+    StatsOut,
+    UserOut,
     get_auth_service,
     get_last_scan,
-    get_reader_control,
-    ScanSummary,
-    AuthenticationService,
-    ReaderControl,
 )
 
 router = APIRouter()
@@ -28,14 +27,24 @@ templates = Jinja2Templates(directory=_TEMPLATES_DIR)
 async def index(
     request: Request,
     auth_service: AuthenticationService = Depends(get_auth_service),
-    reader_control_dep: ReaderControl = Depends(get_reader_control),
+    reader_control_dep: ReaderControl = Depends(ReaderControl),
     last_scan: ScanSummary | None = Depends(get_last_scan),
 ) -> HTMLResponse:
     users = list(auth_service.list_users().values())
-    serialized = [_serialize_user(user) for user in users]
+    serialized = [UserOut.model_validate(user, from_attributes=True) for user in users]
     serialized.sort(key=lambda item: item.name.lower())
-    stats = _build_stats(users)
-    reader_state = _serialize_reader_state(reader_control_dep)
+    total = len(users)
+    active = sum(1 for user in users if user.active)
+    stats = StatsOut(total=total, active=active, inactive=total - active)
+    reader_state_raw = reader_control_dep.get_state()
+    owner = str(reader_state_raw.get("owner") or "door")
+    updated_at = reader_state_raw.get("updated_at")
+    reader_state = ReaderStateOut(
+        owner=owner,
+        owned_by_web=owner == "web",
+        owned_by_door=owner == "door",
+        updated_at=updated_at if isinstance(updated_at, (int, float)) else None,
+    )
     return templates.TemplateResponse(
         "index.html",
         {

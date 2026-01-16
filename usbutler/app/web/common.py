@@ -6,11 +6,10 @@ import os
 import threading
 from typing import Any, Dict, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-from app.services.auth_service import AuthenticationService, Identifier, User
+from app.services.auth_service import AuthenticationService
 from app.services.emv_service import EMVCardService
-from app.services.reader_control import ReaderControl
 
 _DEFAULT_DB_PATH = os.getenv("USBUTLER_USERS_DB", "users.json")
 _BASE_DIR = os.path.dirname(__file__)
@@ -28,24 +27,40 @@ _auth_service = AuthenticationService(_DEFAULT_DB_PATH)
 _emv_service = EMVCardService() if _is_web_reader_enabled() else None
 _scan_lock = threading.Lock()
 _last_scan: "ScanSummary | None" = None
-_reader_control: ReaderControl | None = None
 
 
 class IdentifierOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     value: str
     type: str
     primary: bool
-    masked: str
     metadata: dict
+
+    @computed_field
+    @property
+    def masked(self) -> str:
+        if len(self.value) <= 4:
+            return self.value
+        return f"****{self.value[-4:]}"
 
 
 class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     user_id: str
     name: str
     access_level: str
     active: bool
     identifiers: List[IdentifierOut]
-    primary_identifier: IdentifierOut | None = None
+
+    @computed_field
+    @property
+    def primary_identifier(self) -> IdentifierOut | None:
+        for identifier in self.identifiers:
+            if identifier.primary:
+                return identifier
+        return self.identifiers[0] if self.identifiers else None
 
 
 class StatsOut(BaseModel):
@@ -119,6 +134,16 @@ class AddUserRequest(BaseModel):
     name: str | None = None
     metadata: Dict[str, Any] | None = None
 
+    @model_validator(mode="after")
+    def normalize(self) -> "AddUserRequest":
+        self.identifier = (self.identifier or "").strip() or None
+        self.identifier_type = (self.identifier_type or "UID").strip() or "UID"
+        self.access_level = (self.access_level or "user").strip().lower() or "user"
+        self.user_id = (self.user_id or "").strip() or None
+        self.name = (self.name or "").strip()
+        self.metadata = _metadata_to_dict(self.metadata)
+        return self
+
 
 class SuccessResponse(BaseModel):
     success: bool = True
@@ -167,88 +192,10 @@ class UserErrorResponse(BaseModel):
     existing_user: UserOut | None = None
 
 
-def _serialize_identifier(identifier: Identifier) -> IdentifierOut:
-    return IdentifierOut(
-        value=identifier.value,
-        type=identifier.type,
-        primary=identifier.primary,
-        masked=identifier.mask(),
-        metadata=identifier.metadata,
-    )
-
-
-def _serialize_user(user: User) -> UserOut:
-    identifiers = [_serialize_identifier(identifier) for identifier in user.identifiers]
-    primary = user.primary_identifier()
-    return UserOut(
-        user_id=user.user_id,
-        name=user.name,
-        access_level=user.access_level,
-        active=user.active,
-        identifiers=identifiers,
-        primary_identifier=_serialize_identifier(primary) if primary else None,
-    )
-
-
-def _build_stats(users: List[User]) -> StatsOut:
-    total = len(users)
-    active = sum(1 for user in users if user.active)
-    return StatsOut(total=total, active=active, inactive=total - active)
-
-
-def _get_reader_control() -> ReaderControl:
-    global _reader_control
-    if _reader_control is None:
-        _reader_control = ReaderControl()
-    return _reader_control
-
-
-def set_reader_control(control: ReaderControl | None) -> None:
-    global _reader_control
-    _reader_control = control
-
-
-def reset_services(user_db_path: str | None = None) -> None:
-    """Reset service instances (intended for tests)."""
-
-    global _auth_service, _emv_service, _last_scan, _reader_control
-    db_path = user_db_path or os.getenv("USBUTLER_USERS_DB", "users.json")
-    _auth_service = AuthenticationService(db_path)
-    _emv_service = EMVCardService() if _is_web_reader_enabled() else None
-    _last_scan = None
-    _reader_control = None
-
-
-def _serialize_reader_state(reader_control: ReaderControl) -> ReaderStateOut:
-    state = reader_control.get_state()
-    owner = str(state.get("owner") or "door")
-    updated_at = state.get("updated_at")
-    return ReaderStateOut(
-        owner=owner,
-        owned_by_web=owner == "web",
-        owned_by_door=owner == "door",
-        updated_at=updated_at if isinstance(updated_at, (int, float)) else None,
-    )
-
-
-def _serialize_reader_update(state: Dict[str, object]) -> ReaderControlUpdate:
-    owner = str(state.get("owner") or "door")
-    updated_at = state.get("updated_at")
-    previous_owner = state.get("previous_owner")
-    return ReaderControlUpdate(
-        owner=owner,
-        updated_at=updated_at if isinstance(updated_at, (int, float)) else None,
-        previous_owner=str(previous_owner) if previous_owner is not None else None,
-    )
-
-
 def _metadata_to_dict(metadata: Dict[str, Any] | None) -> Dict[str, Any] | None:
-    if metadata is None:
-        return None
     if not isinstance(metadata, dict):
         return None
-    data = {key: value for key, value in metadata.items() if value is not None}
-    return data or None
+    return {key: value for key, value in metadata.items() if value is not None} or None
 
 
 def get_auth_service() -> AuthenticationService:
@@ -270,7 +217,3 @@ def get_last_scan() -> ScanSummary | None:
 def set_last_scan(scan: ScanSummary | None) -> None:
     global _last_scan
     _last_scan = scan
-
-
-def get_reader_control() -> ReaderControl:
-    return _get_reader_control()

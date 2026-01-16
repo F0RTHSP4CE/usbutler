@@ -93,7 +93,7 @@ def main() -> None:
     port = int(os.getenv("USBUTLER_WEB_PORT", "8000"))
 
     try:
-        app = create_app(shared_reader_control)
+        app = create_app()
         uvicorn.run(app, host=host, port=port, log_level="info")
     finally:
         controller.stop()
