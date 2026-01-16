@@ -8,7 +8,6 @@
   const existingUserAlert = document.querySelector("#existing-user-alert");
   const addUserForm = document.querySelector("#add-user-form");
   const usersTableBody = document.querySelector("#users-table-body");
-  const statsBadge = document.querySelector("#stats-badge");
   const lastScanPanel = document.querySelector("#last-scan-panel");
   const readerControlCard = document.querySelector("#reader-control-card");
   const claimReaderBtn = document.querySelector("#claim-reader-btn");
@@ -24,7 +23,6 @@
   const accessLevelField = document.querySelector("#access-level-field");
   const existingUserWrapper = document.querySelector("#existing-user-select-wrapper");
   const existingUserSelect = document.querySelector("#existing_user");
-  const makePrimaryCheckbox = document.querySelector("#make_primary");
   const submitBtn = document.querySelector("#submit-btn");
 
   let cachedUsers = [];
@@ -437,7 +435,7 @@
     if (!users.length) {
       usersTableBody.innerHTML = `
         <tr>
-          <td colspan="5" class="text-center py-4 text-muted">No users registered yet.</td>
+          <td colspan="4" class="text-center py-4 text-muted">No users registered yet.</td>
         </tr>`;
       return;
     }
@@ -446,32 +444,26 @@
       .map((user) => {
         const identifiersMarkup = user.identifiers
           .map((identifier) => {
-            const primaryBadge = identifier.primary ? " · Primary" : "";
-            const setPrimaryBtn = identifier.primary
-              ? ""
-              : `<button class="btn btn-link btn-sm px-1 set-primary" type="button" data-user-id="${user.user_id}" data-identifier="${identifier.value}">Make primary</button>`;
             const removeBtn = user.identifiers.length > 1
               ? `<button class="btn btn-link btn-sm px-1 text-danger remove-identifier" type="button" data-user-id="${user.user_id}" data-identifier="${identifier.value}">Remove</button>`
               : "";
             return `
               <div class="identifier-entry mb-2" data-identifier="${identifier.value}">
-                <span class="badge bg-info-subtle text-dark me-2">${identifier.type}${primaryBadge}</span>
+                <span class="badge bg-info-subtle text-dark me-2">${identifier.type}</span>
                 <span class="sensitive text-monospace">
                   <span class="masked">${identifier.masked}</span>
                   <span class="full d-none">${identifier.value}</span>
                 </span>
                 <button class="btn btn-link btn-sm px-1 toggle-sensitive" type="button">Show</button>
-                ${setPrimaryBtn}
                 ${removeBtn}
               </div>
             `;
           })
           .join("\n");
 
-        const badge = user.active
-          ? '<span class="badge bg-success">Active</span>'
-          : '<span class="badge bg-secondary">Inactive</span>';
-        const toggleLabel = user.active ? "Deactivate" : "Activate";
+        const statusButton = user.active
+          ? `<button class="btn btn-outline-secondary pause-user" type="button" data-user-id="${user.user_id}">Pause</button>`
+          : `<button class="btn btn-outline-primary resume-user" type="button" data-user-id="${user.user_id}">Resume</button>`;
 
         return `
           <tr data-user-id="${user.user_id}" class="${user.active ? "" : "table-secondary"}">
@@ -481,10 +473,9 @@
             </td>
             <td>${identifiersMarkup}</td>
             <td class="text-capitalize">${user.access_level}</td>
-            <td>${badge}</td>
             <td class="text-end">
               <div class="btn-group btn-group-sm" role="group">
-                <button class="btn btn-outline-secondary toggle-user" type="button" data-user-id="${user.user_id}">${toggleLabel}</button>
+                ${statusButton}
                 <button class="btn btn-outline-danger remove-user" type="button" data-user-id="${user.user_id}">Remove</button>
               </div>
             </td>
@@ -506,13 +497,6 @@
     existingUserSelect.innerHTML = options.join("\n");
   };
 
-  const updateStats = (stats) => {
-    if (!statsBadge || !stats) return;
-    statsBadge.dataset.active = stats.active;
-    statsBadge.dataset.total = stats.total;
-    statsBadge.textContent = `${stats.active} active / ${stats.total} total`;
-  };
-
   const setAssignMode = (mode) => {
     const isNew = mode === "new";
     if (isNew) {
@@ -521,9 +505,6 @@
       existingUserWrapper?.classList.add("d-none");
       if (existingUserSelect) {
         existingUserSelect.disabled = true;
-      }
-      if (makePrimaryCheckbox) {
-        makePrimaryCheckbox.checked = false;
       }
     } else {
       newUserFields?.classList.add("d-none");
@@ -594,12 +575,20 @@
     }
     renderUsers(data.users || []);
     populateExistingUsers();
-    updateStats(data.stats);
     updateLastScanPanel(data.last_scan);
   };
 
-  const handleToggleUser = async (userId) => {
-    const response = await fetch(`/api/users/${encodeURIComponent(userId)}/toggle`, {
+  const handlePauseUser = async (userId) => {
+    const response = await fetch(`/api/users/${encodeURIComponent(userId)}/pause`, {
+      method: "POST",
+    });
+    if (response.ok) {
+      await refreshUsers();
+    }
+  };
+
+  const handleResumeUser = async (userId) => {
+    const response = await fetch(`/api/users/${encodeURIComponent(userId)}/resume`, {
       method: "POST",
     });
     if (response.ok) {
@@ -634,15 +623,6 @@
     }
   };
 
-  const handleSetPrimary = async (userId, identifier) => {
-    const response = await fetch(
-      `/api/users/${encodeURIComponent(userId)}/identifiers/${encodeURIComponent(identifier)}/primary`,
-      { method: "POST" },
-    );
-    if (response.ok) {
-      await refreshUsers();
-    }
-  };
 
   identifierToggleBtn?.addEventListener("click", () => {
     if (!identifierInput.value) {
@@ -656,7 +636,6 @@
   assignNewRadio?.addEventListener("change", () => setAssignMode("new"));
   assignExistingRadio?.addEventListener("change", () => setAssignMode("existing"));
   existingUserSelect?.addEventListener("change", updateSubmitState);
-  makePrimaryCheckbox?.addEventListener("change", () => { });
   document.querySelector("#name")?.addEventListener("input", updateSubmitState);
 
   cardMetaContainer?.addEventListener("click", (event) => {
@@ -684,7 +663,21 @@
     const identifier = button.dataset.identifier;
 
     if (button.classList.contains("toggle-user") && userId) {
-      await handleToggleUser(userId);
+      const row = button.closest("tr");
+      const isInactive = row?.classList.contains("table-secondary");
+      if (isInactive) {
+        await handleResumeUser(userId);
+      } else {
+        await handlePauseUser(userId);
+      }
+      return;
+    }
+    if (button.classList.contains("pause-user") && userId) {
+      await handlePauseUser(userId);
+      return;
+    }
+    if (button.classList.contains("resume-user") && userId) {
+      await handleResumeUser(userId);
       return;
     }
     if (button.classList.contains("remove-user") && userId) {
@@ -694,9 +687,6 @@
     if (button.classList.contains("remove-identifier") && userId && identifier) {
       await handleRemoveIdentifier(userId, identifier);
       return;
-    }
-    if (button.classList.contains("set-primary") && userId && identifier) {
-      await handleSetPrimary(userId, identifier);
     }
   });
 
@@ -812,7 +802,6 @@
         return;
       }
       payload.user_id = userId;
-      payload.make_primary = makePrimaryCheckbox?.checked || false;
     }
 
     const metadataPayload = buildMetadataPayload(latestScan);

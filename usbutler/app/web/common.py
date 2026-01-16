@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-from app.services.auth_service import AuthenticationService
+from app.services.auth_service import AuthService
 from app.services.emv_service import EMVCardService
 
 _DEFAULT_DB_PATH = os.getenv("USBUTLER_USERS_DB", "users.json")
@@ -23,7 +23,7 @@ def _is_web_reader_enabled() -> bool:
 
 
 # Shared service instances reused across requests
-_auth_service = AuthenticationService(_DEFAULT_DB_PATH)
+_auth_service = AuthService(_DEFAULT_DB_PATH)
 _emv_service = EMVCardService() if _is_web_reader_enabled() else None
 _scan_lock = threading.Lock()
 _last_scan: "ScanSummary | None" = None
@@ -53,20 +53,6 @@ class UserOut(BaseModel):
     access_level: str
     active: bool
     identifiers: List[IdentifierOut]
-
-    @computed_field
-    @property
-    def primary_identifier(self) -> IdentifierOut | None:
-        for identifier in self.identifiers:
-            if identifier.primary:
-                return identifier
-        return self.identifiers[0] if self.identifiers else None
-
-
-class StatsOut(BaseModel):
-    total: int
-    active: int
-    inactive: int
 
 
 class ReaderStateOut(BaseModel):
@@ -130,7 +116,6 @@ class AddUserRequest(BaseModel):
     identifier_type: str | None = "UID"
     access_level: str | None = "user"
     user_id: str | None = None
-    make_primary: bool = False
     name: str | None = None
     metadata: Dict[str, Any] | None = None
 
@@ -155,7 +140,6 @@ class UserResponse(SuccessResponse):
 
 class UserListResponse(SuccessResponse):
     users: List[UserOut]
-    stats: StatsOut
     last_scan: ScanSummary | None = None
     reader_enabled: bool
     reader_state: ReaderStateOut
@@ -198,7 +182,7 @@ def _metadata_to_dict(metadata: Dict[str, Any] | None) -> Dict[str, Any] | None:
     return {key: value for key, value in metadata.items() if value is not None} or None
 
 
-def get_auth_service() -> AuthenticationService:
+def get_auth_service() -> AuthService:
     return _auth_service
 
 

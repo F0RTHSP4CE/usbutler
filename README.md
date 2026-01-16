@@ -64,7 +64,7 @@ The door daemon can emit a welcome message to an LED wall and log unlock events 
 | `USBUTLER_TG_MESSAGE_TEMPLATE` | | Python format template for the log message (default: `Door unlocked at {time} by {name} [{identifier_type}: {identifier}]`). |
 | `USBUTLER_TG_REQUEST_TIMEOUT` | | HTTP timeout in seconds (default: `5`). |
 
-The Telegram log automatically censors the primary identifier (PAN/UID) to its last four characters. To reproduce the shell script snippet you can set:
+The Telegram log automatically censors the card identifier (PAN/UID) to its last four characters. To reproduce the shell script snippet you can set:
 
 ```
 USBUTLER_LED_ENDPOINT=http://ledka.lo.f0rth.space/text
@@ -100,7 +100,7 @@ python -m app.cli
 
 This starts the background door loop and serves the web UI on <http://localhost:8000>. Use the **Unlock reader** button in the sidebar to switch the hardware from the door loop to the web view when you need to enrol cards, then click **Return reader** so the door daemon resumes ownership.
 
-The UI uses Bootstrap 5 and offers card scanning, user enrollment, activation toggles, and removal actions. Ensure the NFC reader is connected to the host before starting the server.
+The UI uses Bootstrap 5 and offers card scanning, user enrollment, pause/resume controls, and removal actions. Ensure the NFC reader is connected to the host before starting the server.
 
 ## REST API
 

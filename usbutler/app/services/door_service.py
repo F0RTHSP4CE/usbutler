@@ -255,7 +255,12 @@ class DoorControlService:
         ).astimezone()
         timestamp_text = timestamp.strftime("%Y-%m-%d %H:%M:%S %Z")
 
-        identifier = event.user.primary_identifier() if event.user else None
+        identifier = None
+        if event.user and event.user.identifiers:
+            identifier = next(
+                (item for item in event.user.identifiers if item.primary),
+                event.user.identifiers[0],
+            )
         identifier_type = identifier.type if identifier else "unknown"
         identifier_masked = identifier.mask() if identifier else "unknown"
 

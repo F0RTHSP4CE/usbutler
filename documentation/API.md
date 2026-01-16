@@ -28,7 +28,6 @@ Create a new user with an initial card, or attach a card to an existing user by 
   "name": "Jane Doe",                // required when creating a new user
   "access_level": "user",            // optional, defaults to "user" ("user" or "admin")
   "user_id": "...",                  // optional; set to attach to an existing user
-  "make_primary": true,               // optional when attaching
   "metadata": {                       // optional extra information stored with the identifier
     "issuer": "Visa",
     "expiry": "2507"
@@ -104,9 +103,7 @@ Retrieves the user record that owns a specific identifier. The identifier in the
 
 Existing endpoints that remain available:
 
-- `GET /api/users` – list all users plus dashboard stats.
-- `POST /api/users/<user_id>/toggle` – legacy toggle helper (now superseded by `/pause` and `/resume`).
-- `POST /api/users/<user_id>/identifiers/<identifier_value>/primary` – set an identifier as primary.
+- `GET /api/users` – list all users.
 - `DELETE /api/users/<user_id>/identifiers/<identifier_value>` – remove a specific card from a user.
 
 Refer to the source in `app/web/server.py` or the unit tests in `tests/test_web.py` for additional examples.

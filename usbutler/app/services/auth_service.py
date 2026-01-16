@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 class AuthServiceError(Exception):
@@ -101,7 +101,6 @@ class User:
         if self.identifiers and not any(
             identifier.primary for identifier in self.identifiers
         ):
-            # Ensure we always have a primary identifier if any identifiers exist
             self.identifiers[0].primary = True
 
     def to_dict(self) -> Dict[str, object]:
@@ -126,28 +125,6 @@ class User:
             identifiers=identifiers,
         )
         return user
-
-    @classmethod
-    def from_legacy_record(
-        cls,
-        identifier_value: str,
-        payload: Dict[str, object],
-        identifier_type: str = "PAN",
-    ) -> "User":
-        user = cls(
-            user_id=str(uuid.uuid4()),
-            name=str(payload.get("name", "Unknown")),
-            access_level=str(payload.get("access_level", "user")),
-            active=bool(payload.get("active", True)),
-            identifiers=[Identifier(identifier_value, identifier_type, primary=True)],
-        )
-        return user
-
-    def primary_identifier(self) -> Optional[Identifier]:
-        for identifier in self.identifiers:
-            if identifier.primary:
-                return identifier
-        return self.identifiers[0] if self.identifiers else None
 
     def add_identifier(
         self, identifier: Identifier, make_primary: bool = False
@@ -177,18 +154,8 @@ class User:
             self.identifiers[0].primary = True
         return removed
 
-    def set_primary_identifier(self, value: str) -> bool:
-        found = False
-        for identifier in self.identifiers:
-            if identifier.value == value:
-                identifier.primary = True
-                found = True
-            else:
-                identifier.primary = False
-        return found
 
-
-class AuthenticationService:
+class AuthService:
     """Service for user authentication and management"""
 
     def __init__(self, db_file: str = "users.json"):
@@ -304,14 +271,6 @@ class AuthenticationService:
         self._save_users()
         return user
 
-    def toggle_user_active_or_raise(self, user_id: str) -> User:
-        user = self.users.get(user_id)
-        if not user:
-            raise UserNotFoundError("not_found")
-        user.active = not user.active
-        self._save_users()
-        return user
-
     def list_users(self) -> Dict[str, User]:
         """List all users in the system"""
         return self.users.copy()
@@ -330,28 +289,8 @@ class AuthenticationService:
         self._update_db_mtime()
         return True
 
-    def get_user_count(self) -> int:
-        """Get total number of users"""
-        return len(self.users)
-
-    def get_active_user_count(self) -> int:
-        """Get number of active users"""
-        return sum(1 for user in self.users.values() if user.active)
-
     def get_user(self, user_id: str) -> Optional[User]:
         return self.users.get(user_id)
-
-    def set_primary_identifier_or_raise(
-        self, user_id: str, identifier_value: str
-    ) -> User:
-        user = self.users.get(user_id)
-        if not user:
-            raise UserNotFoundError("not_found")
-        success = user.set_primary_identifier(identifier_value)
-        if not success:
-            raise IdentifierNotFoundError("not_found")
-        self._save_users()
-        return user
 
     def find_user_by_identifier_or_raise(self, identifier_value: str) -> User:
         user = self.users.get(self.identifier_index.get(identifier_value, ""))
@@ -359,27 +298,13 @@ class AuthenticationService:
             raise UserNotFoundError("not_found")
         return user
 
-    def _load_users(self) -> Tuple[Dict[str, User], Dict[str, str]]:
+    def _load_users(self) -> tuple[Dict[str, User], Dict[str, str]]:
         """Load users from JSON file"""
         try:
             with open(self.db_file, "r") as f:
                 raw_data = json.load(f)
         except FileNotFoundError:
-            default_records = {
-                "4111111111111111": {
-                    "name": "John Doe",
-                    "access_level": "admin",
-                    "active": True,
-                },
-                "5555555555554444": {
-                    "name": "Jane Smith",
-                    "access_level": "user",
-                    "active": True,
-                },
-            }
-            users, index = self._convert_legacy_records(default_records)
-            self._save_users_dict(users)
-            return users, index
+            return {}, {}
 
         if not raw_data:
             return {}, {}
@@ -396,33 +321,15 @@ class AuthenticationService:
                     index[identifier.value] = user_id
             return users, index
 
-        if isinstance(raw_data, dict):
-            users, index = self._convert_legacy_records(raw_data)
-            self._save_users_dict(users)
-            return users, index
-
         # Fallback to empty structure if the file contents are not recognised
         return {}, {}
-
-    def _convert_legacy_records(
-        self, legacy: Dict[str, Dict[str, object]]
-    ) -> Tuple[Dict[str, User], Dict[str, str]]:
-        users: Dict[str, User] = {}
-        index: Dict[str, str] = {}
-        for identifier_value, payload in legacy.items():
-            user = User.from_legacy_record(identifier_value, payload)
-            users[user.user_id] = user
-            index[identifier_value] = user.user_id
-        return users, index
 
     def _save_users(self):
         """Save current users to JSON file"""
         self._save_users_dict(self.users)
 
     def _save_users_dict(self, users: Dict[str, User]):
-        """Persist users in the modern storage format."""
         payload = {
-            "version": 2,
             "users": {user_id: user.to_dict() for user_id, user in users.items()},
         }
         with open(self.db_file, "w", encoding="utf-8") as f:

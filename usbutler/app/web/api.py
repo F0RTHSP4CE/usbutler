@@ -13,7 +13,7 @@ from app.services.auth_service import AuthServiceError, User
 from app.services.reader_control import ReaderControl
 from app.web.common import (
     AddUserRequest,
-    AuthenticationService,
+    AuthService,
     EMVCardService,
     ReaderControlUpdate,
     ReaderStateOut,
@@ -21,7 +21,6 @@ from app.web.common import (
     ScanRequest,
     ScanResponse,
     ScanSummary,
-    StatsOut,
     SuccessResponse,
     UserErrorResponse,
     UserListResponse,
@@ -99,18 +98,15 @@ def _handle_user_action(
 
 @router.get("/users", response_model=UserListResponse)
 async def api_list_users(
-    auth_service: AuthenticationService = Depends(get_auth_service),
+    auth_service: AuthService = Depends(get_auth_service),
     reader_control_dep: ReaderControl = Depends(ReaderControl),
     last_scan: ScanSummary | None = Depends(get_last_scan),
 ) -> UserListResponse:
     users = list(auth_service.list_users().values())
     serialized = [UserOut.model_validate(user, from_attributes=True) for user in users]
     serialized.sort(key=lambda item: item.name.lower())
-    total = len(users)
-    active = sum(1 for user in users if user.active)
     return UserListResponse(
         users=serialized,
-        stats=StatsOut(total=total, active=active, inactive=total - active),
         last_scan=last_scan,
         reader_enabled=_is_web_reader_enabled(),
         reader_state=_reader_state_out(reader_control_dep),
@@ -124,7 +120,7 @@ async def api_list_users(
 async def api_scan_card(
     response: Response,
     payload: ScanRequest = Body(default_factory=ScanRequest),
-    auth_service: AuthenticationService = Depends(get_auth_service),
+    auth_service: AuthService = Depends(get_auth_service),
     emv_service: EMVCardService | None = Depends(get_emv_service),
     reader_control_dep: ReaderControl = Depends(ReaderControl),
     scan_lock: threading.Lock = Depends(get_scan_lock),
@@ -296,13 +292,12 @@ async def api_release_reader(
 async def api_add_user(
     response: Response,
     payload: AddUserRequest = Body(...),
-    auth_service: AuthenticationService = Depends(get_auth_service),
+    auth_service: AuthService = Depends(get_auth_service),
 ) -> UserResponse | UserErrorResponse:
     identifier = payload.identifier or ""
     identifier_type = payload.identifier_type or "UID"
     access_level = payload.access_level or "user"
     user_id = payload.user_id
-    make_primary = payload.make_primary
     name = payload.name or ""
     metadata = payload.metadata
 
@@ -316,7 +311,7 @@ async def api_add_user(
                 user_id,
                 identifier,
                 identifier_type,
-                make_primary,
+                False,
                 metadata,
             )
             response.status_code = status.HTTP_200_OK
@@ -338,28 +333,13 @@ async def api_add_user(
 
 
 @router.post(
-    "/users/{user_id}/toggle",
-    response_model=Union[UserResponse, UserErrorResponse],
-)
-async def api_toggle_user(
-    user_id: str,
-    response: Response,
-    auth_service: AuthenticationService = Depends(get_auth_service),
-) -> UserResponse | UserErrorResponse:
-    return _handle_user_action(
-        response,
-        lambda: auth_service.toggle_user_active_or_raise(user_id),
-    )
-
-
-@router.post(
     "/users/{user_id}/pause",
     response_model=Union[UserResponse, UserErrorResponse],
 )
 async def api_pause_user(
     user_id: str,
     response: Response,
-    auth_service: AuthenticationService = Depends(get_auth_service),
+    auth_service: AuthService = Depends(get_auth_service),
 ) -> UserResponse | UserErrorResponse:
     return _handle_user_action(
         response,
@@ -374,7 +354,7 @@ async def api_pause_user(
 async def api_resume_user(
     user_id: str,
     response: Response,
-    auth_service: AuthenticationService = Depends(get_auth_service),
+    auth_service: AuthService = Depends(get_auth_service),
 ) -> UserResponse | UserErrorResponse:
     return _handle_user_action(
         response,
@@ -389,7 +369,7 @@ async def api_resume_user(
 async def api_delete_user(
     user_id: str,
     response: Response,
-    auth_service: AuthenticationService = Depends(get_auth_service),
+    auth_service: AuthService = Depends(get_auth_service),
 ) -> SuccessResponse | UserErrorResponse:
     try:
         auth_service.delete_user_or_raise(user_id)
@@ -406,7 +386,7 @@ async def api_delete_user(
 async def api_get_user_by_identifier(
     identifier_value: str,
     response: Response,
-    auth_service: AuthenticationService = Depends(get_auth_service),
+    auth_service: AuthService = Depends(get_auth_service),
 ) -> UserResponse | UserErrorResponse:
     value = identifier_value.strip()
     if not value:
@@ -428,7 +408,7 @@ async def api_remove_identifier(
     user_id: str,
     identifier_value: str,
     response: Response,
-    auth_service: AuthenticationService = Depends(get_auth_service),
+    auth_service: AuthService = Depends(get_auth_service),
 ) -> RemoveIdentifierResponse | UserErrorResponse:
     try:
         user, removed = auth_service.remove_identifier_from_user_or_raise(
@@ -444,19 +424,3 @@ async def api_remove_identifier(
         )
     except AuthServiceError as exc:
         return _handle_auth_error(response, exc)
-
-
-@router.post(
-    "/users/{user_id}/identifiers/{identifier_value}/primary",
-    response_model=Union[UserResponse, UserErrorResponse],
-)
-async def api_set_primary(
-    user_id: str,
-    identifier_value: str,
-    response: Response,
-    auth_service: AuthenticationService = Depends(get_auth_service),
-) -> UserResponse | UserErrorResponse:
-    return _handle_user_action(
-        response,
-        lambda: auth_service.set_primary_identifier_or_raise(user_id, identifier_value),
-    )

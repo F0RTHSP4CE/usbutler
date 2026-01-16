@@ -8,7 +8,7 @@ import threading
 from app.services.reader_control import ReaderControl
 from app.services.door_service import DoorControlService
 from app.services.emv_service import EMVCardService
-from app.services.auth_service import AuthenticationService
+from app.services.auth_service import AuthService
 
 
 class SmartDoorLockController:
@@ -17,7 +17,7 @@ class SmartDoorLockController:
     def __init__(self, reader_control: ReaderControl) -> None:
         self.emv_service = EMVCardService()
         db_path = os.getenv("USBUTLER_USERS_DB", "users.json")
-        self.auth_service = AuthenticationService(db_path)
+        self.auth_service = AuthService(db_path)
         self.door_service = DoorControlService()
         self.reader_control = reader_control
         self.running = False

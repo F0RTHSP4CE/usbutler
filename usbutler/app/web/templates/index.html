@@ -22,8 +22,6 @@
         <div class="card shadow-sm">
           <div class="card-header d-flex justify-content-between align-items-center">
             <h5 class="mb-0">Registered Users</h5>
-            <span class="badge bg-primary" id="stats-badge" data-active="{{ stats.active }}"
-              data-total="{{ stats.total }}">{{ stats.active }} active / {{ stats.total }} total</span>
           </div>
           <div class="table-responsive">
             <table class="table table-hover align-middle mb-0" id="users-table">
@@ -32,7 +30,6 @@
                   <th scope="col">Name</th>
                   <th scope="col">Cards</th>
                   <th scope="col">Access</th>
-                  <th scope="col">Status</th>
                   <th class="text-end" scope="col">Actions</th>
                 </tr>
               </thead>
@@ -47,17 +44,12 @@
                     {% if user.identifiers %}
                     {% for identifier in user.identifiers %}
                     <div class="identifier-entry mb-2" data-identifier="{{ identifier.value }}">
-                      <span class="badge bg-info-subtle text-dark me-2">{{ identifier.type }}{% if identifier.primary %}
-                        · Primary{% endif %}</span>
+                      <span class="badge bg-info-subtle text-dark me-2">{{ identifier.type }}</span>
                       <span class="sensitive text-monospace">
                         <span class="masked">{{ identifier.masked }}</span>
                         <span class="full d-none">{{ identifier.value }}</span>
                       </span>
                       <button class="btn btn-link btn-sm px-1 toggle-sensitive" type="button">Show</button>
-                      {% if not identifier.primary %}
-                      <button class="btn btn-link btn-sm px-1 set-primary" type="button"
-                        data-user-id="{{ user.user_id }}" data-identifier="{{ identifier.value }}">Make primary</button>
-                      {% endif %}
                       {% if user.identifiers|length > 1 %}
                       <button class="btn btn-link btn-sm px-1 text-danger remove-identifier" type="button"
                         data-user-id="{{ user.user_id }}" data-identifier="{{ identifier.value }}">Remove</button>
@@ -69,19 +61,15 @@
                     {% endif %}
                   </td>
                   <td class="text-capitalize">{{ user.access_level }}</td>
-                  <td>
-                    {% if user.active %}
-                    <span class="badge bg-success">Active</span>
-                    {% else %}
-                    <span class="badge bg-secondary">Inactive</span>
-                    {% endif %}
-                  </td>
                   <td class="text-end">
                     <div class="btn-group btn-group-sm" role="group">
-                      <button class="btn btn-outline-secondary toggle-user" type="button"
-                        data-user-id="{{ user.user_id }}">
-                        {% if user.active %}Deactivate{% else %}Activate{% endif %}
-                      </button>
+                      {% if user.active %}
+                      <button class="btn btn-outline-secondary pause-user" type="button"
+                        data-user-id="{{ user.user_id }}">Pause</button>
+                      {% else %}
+                      <button class="btn btn-outline-primary resume-user" type="button"
+                        data-user-id="{{ user.user_id }}">Resume</button>
+                      {% endif %}
                       <button class="btn btn-outline-danger remove-user" type="button"
                         data-user-id="{{ user.user_id }}">
                         Remove
@@ -193,10 +181,6 @@
                 <select class="form-select" id="existing_user" name="existing_user" disabled>
                   <option value="">Choose a user…</option>
                 </select>
-                <div class="form-check mt-2">
-                  <input class="form-check-input" type="checkbox" id="make_primary" name="make_primary" />
-                  <label class="form-check-label" for="make_primary">Make this the primary card</label>
-                </div>
               </div>
 
               <div class="d-grid">
