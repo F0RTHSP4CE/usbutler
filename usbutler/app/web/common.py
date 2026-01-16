@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.services.auth_service import AuthenticationService, Identifier, User
 from app.services.emv_service import EMVCardService
@@ -117,7 +117,7 @@ class AddUserRequest(BaseModel):
     user_id: str | None = None
     make_primary: bool = False
     name: str | None = None
-    metadata: MetadataInput | None = None
+    metadata: Dict[str, Any] | None = None
 
 
 class SuccessResponse(BaseModel):
@@ -242,10 +242,12 @@ def _serialize_reader_update(state: Dict[str, object]) -> ReaderControlUpdate:
     )
 
 
-def _metadata_to_dict(metadata: MetadataInput | None) -> Dict[str, Any] | None:
+def _metadata_to_dict(metadata: Dict[str, Any] | None) -> Dict[str, Any] | None:
     if metadata is None:
         return None
-    data = metadata.model_dump(exclude_none=True)
+    if not isinstance(metadata, dict):
+        return None
+    data = {key: value for key, value in metadata.items() if value is not None}
     return data or None
 
 

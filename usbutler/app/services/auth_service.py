@@ -8,6 +8,41 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 
+class AuthServiceError(Exception):
+    """Base error for authentication service operations."""
+
+    def __init__(self, code: str, message: str | None = None):
+        self.code = code
+        self.message = message
+        super().__init__(message or code)
+
+
+class UserNotFoundError(AuthServiceError):
+    def __init__(self, message: str | None = None):
+        super().__init__("not_found", message)
+
+
+class IdentifierNotFoundError(AuthServiceError):
+    def __init__(self, message: str | None = None):
+        super().__init__("not_found", message)
+
+
+class IdentifierExistsError(AuthServiceError):
+    def __init__(self, existing_user: "User | None" = None, message: str | None = None):
+        super().__init__("user_exists", message)
+        self.existing_user = existing_user
+
+
+class InvalidAccessLevelError(AuthServiceError):
+    def __init__(self, message: str | None = None):
+        super().__init__("invalid_access_level", message)
+
+
+class MissingNameError(AuthServiceError):
+    def __init__(self, message: str | None = None):
+        super().__init__("missing_name", message)
+
+
 class Identifier:
     """Represents a stable identifier associated with a user."""
 
@@ -38,11 +73,12 @@ class Identifier:
 
     @classmethod
     def from_dict(cls, data: Dict[str, object]) -> "Identifier":
+        metadata = data.get("metadata")
         return cls(
             value=str(data.get("value", "")),
             identifier_type=str(data.get("type", "PAN")),
             primary=bool(data.get("primary", False)),
-            metadata=data.get("metadata") if isinstance(data.get("metadata"), dict) else None,
+            metadata=metadata if isinstance(metadata, dict) else None,
         )
 
 
@@ -62,7 +98,9 @@ class User:
         self.access_level = access_level
         self.active = active
         self.identifiers: List[Identifier] = identifiers[:] if identifiers else []
-        if self.identifiers and not any(identifier.primary for identifier in self.identifiers):
+        if self.identifiers and not any(
+            identifier.primary for identifier in self.identifiers
+        ):
             # Ensure we always have a primary identifier if any identifiers exist
             self.identifiers[0].primary = True
 
@@ -77,6 +115,8 @@ class User:
     @classmethod
     def from_dict(cls, user_id: str, data: Dict[str, object]) -> "User":
         identifiers_data = data.get("identifiers", [])
+        if not isinstance(identifiers_data, list):
+            identifiers_data = []
         identifiers = [Identifier.from_dict(item) for item in identifiers_data]
         user = cls(
             user_id=user_id,
@@ -109,7 +149,9 @@ class User:
                 return identifier
         return self.identifiers[0] if self.identifiers else None
 
-    def add_identifier(self, identifier: Identifier, make_primary: bool = False) -> None:
+    def add_identifier(
+        self, identifier: Identifier, make_primary: bool = False
+    ) -> None:
         if any(item.value == identifier.value for item in self.identifiers):
             return
         if make_primary or not self.identifiers:
@@ -168,23 +210,7 @@ class AuthenticationService:
             return user
         return None
 
-    def add_user(self, pan: str, name: str, access_level: str = "user") -> bool:
-        """
-        Add a new user to the system
-        Returns True if successful, False if user already exists
-        """
-        if pan in self.identifier_index:
-            return False
-
-        self.create_user(
-            identifier_value=pan,
-            name=name,
-            access_level=access_level,
-            identifier_type="PAN",
-        )
-        return True
-
-    def create_user(
+    def create_user_or_raise(
         self,
         identifier_value: str,
         name: str,
@@ -192,6 +218,15 @@ class AuthenticationService:
         identifier_type: str = "PAN",
         metadata: Optional[Dict[str, Any]] = None,
     ) -> User:
+        if identifier_value in self.identifier_index:
+            existing_user = self.users.get(
+                self.identifier_index.get(identifier_value, "")
+            )
+            raise IdentifierExistsError(existing_user)
+        if not name:
+            raise MissingNameError("missing_name")
+        if access_level not in {"user", "admin"}:
+            raise InvalidAccessLevelError("invalid_access_level")
         user_id = str(uuid.uuid4())
         user = User(user_id=user_id, name=name, access_level=access_level, active=True)
         user.add_identifier(
@@ -202,24 +237,27 @@ class AuthenticationService:
                 metadata=metadata,
             )
         )
-        self.users[user_id] = user
         self.identifier_index[identifier_value] = user_id
+        self.users[user_id] = user
         self._save_users()
         return user
 
-    def add_identifier_to_user(
+    def add_identifier_to_user_or_raise(
         self,
         user_id: str,
         identifier_value: str,
         identifier_type: str = "UID",
         make_primary: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> bool:
+    ) -> User:
         if identifier_value in self.identifier_index:
-            return False
+            existing_user = self.users.get(
+                self.identifier_index.get(identifier_value, "")
+            )
+            raise IdentifierExistsError(existing_user)
         user = self.users.get(user_id)
         if not user:
-            return False
+            raise UserNotFoundError("not_found")
         user.add_identifier(
             Identifier(
                 identifier_value,
@@ -230,86 +268,49 @@ class AuthenticationService:
         )
         self.identifier_index[identifier_value] = user_id
         self._save_users()
-        return True
+        return user
 
-    def remove_user(self, pan: str) -> bool:
-        """
-        Remove a specific identifier from the system. If it was the user's last
-        identifier, the user record will be removed as well.
-        Returns True if successful, False if user doesn't exist
-        """
-        user_id = self.identifier_index.get(pan)
-        if not user_id:
-            return False
-
+    def remove_identifier_from_user_or_raise(
+        self, user_id: str, identifier_value: str
+    ) -> tuple[User | None, bool]:
         user = self.users.get(user_id)
         if not user:
-            return False
-
-        removed = user.remove_identifier(pan)
-        if not removed:
-            return False
-
-        del self.identifier_index[pan]
-        if not user.identifiers:
-            del self.users[user_id]
-        self._save_users()
-        return True
-
-    def remove_identifier_from_user(self, user_id: str, identifier_value: str) -> bool:
-        user = self.users.get(user_id)
-        if not user:
-            return False
+            raise UserNotFoundError("not_found")
         removed = user.remove_identifier(identifier_value)
         if not removed:
-            return False
+            raise IdentifierNotFoundError("not_found")
         self.identifier_index.pop(identifier_value, None)
+        user_removed = False
         if not user.identifiers:
             del self.users[user_id]
+            user_removed = True
         self._save_users()
-        return True
+        return (None if user_removed else user, user_removed)
 
-    def delete_user(self, user_id: str) -> bool:
+    def delete_user_or_raise(self, user_id: str) -> None:
         user = self.users.get(user_id)
         if not user:
-            return False
+            raise UserNotFoundError("not_found")
         for identifier in user.identifiers:
             self.identifier_index.pop(identifier.value, None)
         del self.users[user_id]
         self._save_users()
-        return True
 
-    def deactivate_user(self, pan: str) -> bool:
-        """
-        Deactivate a user (keep in database but deny access)
-        Returns True if successful, False if user doesn't exist
-        """
-        user = self.authenticate_user(pan)
-        if not user:
-            return False
-        user.active = False
-        self._save_users()
-        return True
-
-    def set_user_active(self, user_id: str, active: bool) -> bool:
+    def set_user_active_or_raise(self, user_id: str, active: bool) -> User:
         user = self.users.get(user_id)
         if not user:
-            return False
+            raise UserNotFoundError("not_found")
         user.active = active
         self._save_users()
-        return True
+        return user
 
-    def activate_user(self, pan: str) -> bool:
-        """
-        Activate a user
-        Returns True if successful, False if user doesn't exist
-        """
-        user = self.authenticate_user(pan)
+    def toggle_user_active_or_raise(self, user_id: str) -> User:
+        user = self.users.get(user_id)
         if not user:
-            return False
-        user.active = True
+            raise UserNotFoundError("not_found")
+        user.active = not user.active
         self._save_users()
-        return True
+        return user
 
     def list_users(self) -> Dict[str, User]:
         """List all users in the system"""
@@ -340,33 +341,41 @@ class AuthenticationService:
     def get_user(self, user_id: str) -> Optional[User]:
         return self.users.get(user_id)
 
-    def identifier_exists(self, identifier_value: str) -> bool:
-        return identifier_value in self.identifier_index
-
-    def set_primary_identifier(self, user_id: str, identifier_value: str) -> bool:
+    def set_primary_identifier_or_raise(
+        self, user_id: str, identifier_value: str
+    ) -> User:
         user = self.users.get(user_id)
         if not user:
-            return False
+            raise UserNotFoundError("not_found")
         success = user.set_primary_identifier(identifier_value)
-        if success:
-            self._save_users()
-        return success
+        if not success:
+            raise IdentifierNotFoundError("not_found")
+        self._save_users()
+        return user
 
-    def find_user_by_identifier(self, identifier_value: str) -> Optional[User]:
-        user_id = self.identifier_index.get(identifier_value)
-        if not user_id:
-            return None
-        return self.users.get(user_id)
+    def find_user_by_identifier_or_raise(self, identifier_value: str) -> User:
+        user = self.users.get(self.identifier_index.get(identifier_value, ""))
+        if not user:
+            raise UserNotFoundError("not_found")
+        return user
 
-    def _load_users(self) -> Dict[str, User]:
+    def _load_users(self) -> Tuple[Dict[str, User], Dict[str, str]]:
         """Load users from JSON file"""
         try:
             with open(self.db_file, "r") as f:
                 raw_data = json.load(f)
         except FileNotFoundError:
             default_records = {
-                "4111111111111111": {"name": "John Doe", "access_level": "admin", "active": True},
-                "5555555555554444": {"name": "Jane Smith", "access_level": "user", "active": True},
+                "4111111111111111": {
+                    "name": "John Doe",
+                    "access_level": "admin",
+                    "active": True,
+                },
+                "5555555555554444": {
+                    "name": "Jane Smith",
+                    "access_level": "user",
+                    "active": True,
+                },
             }
             users, index = self._convert_legacy_records(default_records)
             self._save_users_dict(users)

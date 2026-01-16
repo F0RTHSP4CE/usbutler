@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import time
 import threading
-from typing import Union
+from typing import Callable, Union
 
 from fastapi import APIRouter, Body, Depends, Response, status
 
+from app.services.auth_service import AuthServiceError, User
 from app.web.common import (
     AddUserRequest,
     AuthenticationService,
@@ -40,6 +41,34 @@ from app.web.common import (
 )
 
 router = APIRouter()
+
+
+def _handle_auth_error(response: Response, exc: AuthServiceError) -> UserErrorResponse:
+    status_by_code = {
+        "missing_identifier": status.HTTP_400_BAD_REQUEST,
+        "missing_name": status.HTTP_400_BAD_REQUEST,
+        "invalid_access_level": status.HTTP_400_BAD_REQUEST,
+        "user_exists": status.HTTP_409_CONFLICT,
+        "not_found": status.HTTP_404_NOT_FOUND,
+    }
+    response.status_code = status_by_code.get(exc.code, status.HTTP_400_BAD_REQUEST)
+    existing_user = getattr(exc, "existing_user", None)
+    return UserErrorResponse(
+        error=exc.code,
+        message=exc.message,
+        existing_user=_serialize_user(existing_user) if existing_user else None,
+    )
+
+
+def _handle_user_action(
+    response: Response, action: Callable[[], "User"]
+) -> UserResponse | UserErrorResponse:
+    try:
+        user = action()
+        response.status_code = status.HTTP_200_OK
+        return UserResponse(user=_serialize_user(user))
+    except AuthServiceError as exc:
+        return _handle_auth_error(response, exc)
 
 
 @router.get("/users", response_model=UserListResponse)
@@ -138,7 +167,10 @@ async def api_scan_card(
             "atr_hex_compact": getattr(scan, "atr_hex_compact", None),
             "atr_summary": getattr(scan, "atr_summary", None),
         }
-        existing_user = auth_service.find_user_by_identifier(identifier)
+        try:
+            existing_user = auth_service.find_user_by_identifier_or_raise(identifier)
+        except AuthServiceError:
+            existing_user = None
 
         response_model = ScanResponse(
             identifier=identifier,
@@ -254,51 +286,29 @@ async def api_add_user(
         response.status_code = status.HTTP_400_BAD_REQUEST
         return UserErrorResponse(error="missing_identifier")
 
-    if auth_service.identifier_exists(identifier):
-        existing_user = auth_service.find_user_by_identifier(identifier)
-        response.status_code = status.HTTP_409_CONFLICT
-        return UserErrorResponse(
-            error="user_exists",
-            existing_user=_serialize_user(existing_user) if existing_user else None,
+    try:
+        if user_id:
+            updated = auth_service.add_identifier_to_user_or_raise(
+                user_id,
+                identifier,
+                identifier_type,
+                make_primary,
+                metadata,
+            )
+            response.status_code = status.HTTP_200_OK
+            return UserResponse(user=_serialize_user(updated))
+
+        new_user = auth_service.create_user_or_raise(
+            identifier_value=identifier,
+            name=name,
+            access_level=access_level,
+            identifier_type=identifier_type,
+            metadata=metadata,
         )
-
-    if user_id:
-        user = auth_service.get_user(user_id)
-        if not user:
-            response.status_code = status.HTTP_404_NOT_FOUND
-            return UserErrorResponse(error="not_found")
-        if not auth_service.add_identifier_to_user(
-            user_id,
-            identifier,
-            identifier_type,
-            make_primary,
-            metadata,
-        ):
-            response.status_code = status.HTTP_409_CONFLICT
-            return UserErrorResponse(error="user_exists")
-        refreshed = auth_service.get_user(user_id)
-        if refreshed is None:
-            response.status_code = status.HTTP_404_NOT_FOUND
-            return UserErrorResponse(error="not_found")
-        response.status_code = status.HTTP_200_OK
-        return UserResponse(user=_serialize_user(refreshed))
-
-    if not name:
-        response.status_code = status.HTTP_400_BAD_REQUEST
-        return UserErrorResponse(error="missing_name")
-    if access_level not in {"user", "admin"}:
-        response.status_code = status.HTTP_400_BAD_REQUEST
-        return UserErrorResponse(error="invalid_access_level")
-
-    new_user = auth_service.create_user(
-        identifier_value=identifier,
-        name=name,
-        access_level=access_level,
-        identifier_type=identifier_type,
-        metadata=metadata,
-    )
-    response.status_code = status.HTTP_201_CREATED
-    return UserResponse(user=_serialize_user(new_user))
+        response.status_code = status.HTTP_201_CREATED
+        return UserResponse(user=_serialize_user(new_user))
+    except AuthServiceError as exc:
+        return _handle_auth_error(response, exc)
 
 
 @router.post(
@@ -310,17 +320,10 @@ async def api_toggle_user(
     response: Response,
     auth_service: AuthenticationService = Depends(get_auth_service),
 ) -> UserResponse | UserErrorResponse:
-    user = auth_service.get_user(user_id)
-    if not user:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return UserErrorResponse(error="not_found")
-    auth_service.set_user_active(user_id, not user.active)
-    refreshed = auth_service.get_user(user_id)
-    if refreshed is None:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return UserErrorResponse(error="not_found")
-    response.status_code = status.HTTP_200_OK
-    return UserResponse(user=_serialize_user(refreshed))
+    return _handle_user_action(
+        response,
+        lambda: auth_service.toggle_user_active_or_raise(user_id),
+    )
 
 
 @router.post(
@@ -332,18 +335,10 @@ async def api_pause_user(
     response: Response,
     auth_service: AuthenticationService = Depends(get_auth_service),
 ) -> UserResponse | UserErrorResponse:
-    user = auth_service.get_user(user_id)
-    if not user:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return UserErrorResponse(error="not_found")
-    if user.active:
-        auth_service.set_user_active(user_id, False)
-    refreshed = auth_service.get_user(user_id)
-    if refreshed is None:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return UserErrorResponse(error="not_found")
-    response.status_code = status.HTTP_200_OK
-    return UserResponse(user=_serialize_user(refreshed))
+    return _handle_user_action(
+        response,
+        lambda: auth_service.set_user_active_or_raise(user_id, False),
+    )
 
 
 @router.post(
@@ -355,18 +350,10 @@ async def api_resume_user(
     response: Response,
     auth_service: AuthenticationService = Depends(get_auth_service),
 ) -> UserResponse | UserErrorResponse:
-    user = auth_service.get_user(user_id)
-    if not user:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return UserErrorResponse(error="not_found")
-    if not user.active:
-        auth_service.set_user_active(user_id, True)
-    refreshed = auth_service.get_user(user_id)
-    if refreshed is None:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return UserErrorResponse(error="not_found")
-    response.status_code = status.HTTP_200_OK
-    return UserResponse(user=_serialize_user(refreshed))
+    return _handle_user_action(
+        response,
+        lambda: auth_service.set_user_active_or_raise(user_id, True),
+    )
 
 
 @router.delete(
@@ -378,11 +365,12 @@ async def api_delete_user(
     response: Response,
     auth_service: AuthenticationService = Depends(get_auth_service),
 ) -> SuccessResponse | UserErrorResponse:
-    if not auth_service.delete_user(user_id):
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return UserErrorResponse(error="not_found")
-    response.status_code = status.HTTP_200_OK
-    return SuccessResponse()
+    try:
+        auth_service.delete_user_or_raise(user_id)
+        response.status_code = status.HTTP_200_OK
+        return SuccessResponse()
+    except AuthServiceError as exc:
+        return _handle_auth_error(response, exc)
 
 
 @router.get(
@@ -398,12 +386,12 @@ async def api_get_user_by_identifier(
     if not value:
         response.status_code = status.HTTP_400_BAD_REQUEST
         return UserErrorResponse(error="missing_identifier")
-    user = auth_service.find_user_by_identifier(value)
-    if not user:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return UserErrorResponse(error="not_found")
-    response.status_code = status.HTTP_200_OK
-    return UserResponse(user=_serialize_user(user))
+    try:
+        user = auth_service.find_user_by_identifier_or_raise(value)
+        response.status_code = status.HTTP_200_OK
+        return UserResponse(user=_serialize_user(user))
+    except AuthServiceError as exc:
+        return _handle_auth_error(response, exc)
 
 
 @router.delete(
@@ -416,14 +404,18 @@ async def api_remove_identifier(
     response: Response,
     auth_service: AuthenticationService = Depends(get_auth_service),
 ) -> RemoveIdentifierResponse | UserErrorResponse:
-    if not auth_service.remove_identifier_from_user(user_id, identifier_value):
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return UserErrorResponse(error="not_found")
-    user = auth_service.get_user(user_id)
-    response.status_code = status.HTTP_200_OK
-    if not user:
-        return RemoveIdentifierResponse(user_removed=True)
-    return RemoveIdentifierResponse(user=_serialize_user(user))
+    try:
+        user, removed = auth_service.remove_identifier_from_user_or_raise(
+            user_id, identifier_value
+        )
+        response.status_code = status.HTTP_200_OK
+        if removed:
+            return RemoveIdentifierResponse(user_removed=True)
+        if user is None:
+            return RemoveIdentifierResponse(user_removed=True)
+        return RemoveIdentifierResponse(user=_serialize_user(user))
+    except AuthServiceError as exc:
+        return _handle_auth_error(response, exc)
 
 
 @router.post(
@@ -436,12 +428,7 @@ async def api_set_primary(
     response: Response,
     auth_service: AuthenticationService = Depends(get_auth_service),
 ) -> UserResponse | UserErrorResponse:
-    if not auth_service.set_primary_identifier(user_id, identifier_value):
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return UserErrorResponse(error="not_found")
-    user = auth_service.get_user(user_id)
-    if user is None:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return UserErrorResponse(error="not_found")
-    response.status_code = status.HTTP_200_OK
-    return UserResponse(user=_serialize_user(user))
+    return _handle_user_action(
+        response,
+        lambda: auth_service.set_primary_identifier_or_raise(user_id, identifier_value),
+    )
