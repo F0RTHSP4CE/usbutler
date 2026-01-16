@@ -14,7 +14,6 @@
   const releaseReaderBtn = document.querySelector("#release-reader-btn");
   const readerStatusMessage = document.querySelector("#reader-status-message");
   const readerOwnerBadge = document.querySelector("#reader-owner-badge");
-  const readerUpdatedAt = document.querySelector("#reader-updated-at");
   const readerEnabled = document.body?.dataset?.readerEnabled === "true";
 
   const assignNewRadio = document.querySelector("#assign-new");
@@ -89,8 +88,7 @@
     `;
   };
 
-  const isReaderOwnedByWeb = () =>
-    Boolean(currentReaderState?.owned_by_web || currentReaderState?.owner === "web");
+  const isReaderOwnedByWeb = () => currentReaderState?.owner === "web";
 
   const canScanWithReader = () => readerEnabled && isReaderOwnedByWeb();
 
@@ -101,14 +99,6 @@
     return owner[0]?.toUpperCase() + owner.slice(1);
   };
 
-  const formatUpdatedAt = (timestamp) => {
-    if (!timestamp) return "";
-    const date = new Date(Number(timestamp) * 1000);
-    if (Number.isNaN(date.getTime())) {
-      return "";
-    }
-    return `Last change: ${date.toLocaleString()}`;
-  };
 
   const updateScanButtonState = () => {
     if (!scanBtn) return;
@@ -143,10 +133,6 @@
       readerOwnerBadge.classList.remove("bg-secondary", "bg-success", "bg-primary", "bg-warning");
       const badgeClass = owner === "web" ? "bg-success" : owner === "door" ? "bg-primary" : "bg-warning";
       readerOwnerBadge.classList.add(badgeClass);
-    }
-
-    if (readerUpdatedAt) {
-      readerUpdatedAt.textContent = formatUpdatedAt(state?.updated_at);
     }
 
     if (!readerEnabled) {

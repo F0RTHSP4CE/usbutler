@@ -16,6 +16,7 @@ from app.web.common import (
     UserOut,
     get_auth_service,
     get_last_scan,
+    get_reader_control,
 )
 
 router = APIRouter()
@@ -26,20 +27,15 @@ templates = Jinja2Templates(directory=_TEMPLATES_DIR)
 async def index(
     request: Request,
     auth_service: AuthService = Depends(get_auth_service),
-    reader_control_dep: ReaderControl = Depends(ReaderControl),
+    reader_control_dep: ReaderControl = Depends(get_reader_control),
     last_scan: ScanSummary | None = Depends(get_last_scan),
 ) -> HTMLResponse:
     users = list(auth_service.list_users().values())
     serialized = [UserOut.model_validate(user, from_attributes=True) for user in users]
     serialized.sort(key=lambda item: item.name.lower())
-    reader_state_raw = reader_control_dep.get_state()
-    owner = str(reader_state_raw.get("owner") or "door")
-    updated_at = reader_state_raw.get("updated_at")
+    owner = str(reader_control_dep.get_owner() or "door")
     reader_state = ReaderStateOut(
         owner=owner,
-        owned_by_web=owner == "web",
-        owned_by_door=owner == "door",
-        updated_at=updated_at if isinstance(updated_at, (int, float)) else None,
     )
     return templates.TemplateResponse(
         "index.html",

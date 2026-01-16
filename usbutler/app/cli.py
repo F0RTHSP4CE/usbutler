@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import threading
 
-from app.services.reader_control import ReaderControl
+from app.services.reader_control import get_reader_control
 from app.services.door_service import DoorControlService
 from app.services.emv_service import EMVCardService
 from app.services.auth_service import AuthService
@@ -81,7 +81,7 @@ def main() -> None:
     from app.web.app import create_app
     import uvicorn
 
-    shared_reader_control = ReaderControl()
+    shared_reader_control = get_reader_control()
     controller = SmartDoorLockController(shared_reader_control)
 
     door_thread = threading.Thread(

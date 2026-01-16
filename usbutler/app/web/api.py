@@ -15,7 +15,6 @@ from app.web.common import (
     AddUserRequest,
     AuthService,
     EMVCardService,
-    ReaderControlUpdate,
     ReaderStateOut,
     ScanErrorResponse,
     ScanRequest,
@@ -33,35 +32,13 @@ from app.web.common import (
     get_auth_service,
     get_emv_service,
     get_last_scan,
+    get_reader_control,
     get_scan_lock,
     set_last_scan,
     UserOut,
 )
 
 router = APIRouter()
-
-
-def _reader_state_out(reader_control: ReaderControl) -> ReaderStateOut:
-    state = reader_control.get_state()
-    owner = str(state.get("owner") or "door")
-    updated_at = state.get("updated_at")
-    return ReaderStateOut(
-        owner=owner,
-        owned_by_web=owner == "web",
-        owned_by_door=owner == "door",
-        updated_at=updated_at if isinstance(updated_at, (int, float)) else None,
-    )
-
-
-def _reader_update_out(state: dict[str, object]) -> ReaderControlUpdate:
-    owner = str(state.get("owner") or "door")
-    updated_at = state.get("updated_at")
-    previous_owner = state.get("previous_owner")
-    return ReaderControlUpdate(
-        owner=owner,
-        updated_at=updated_at if isinstance(updated_at, (int, float)) else None,
-        previous_owner=str(previous_owner) if previous_owner is not None else None,
-    )
 
 
 def _handle_auth_error(response: Response, exc: AuthServiceError) -> UserErrorResponse:
@@ -99,17 +76,18 @@ def _handle_user_action(
 @router.get("/users", response_model=UserListResponse)
 async def api_list_users(
     auth_service: AuthService = Depends(get_auth_service),
-    reader_control_dep: ReaderControl = Depends(ReaderControl),
+    reader_control_dep: ReaderControl = Depends(get_reader_control),
     last_scan: ScanSummary | None = Depends(get_last_scan),
 ) -> UserListResponse:
     users = list(auth_service.list_users().values())
     serialized = [UserOut.model_validate(user, from_attributes=True) for user in users]
     serialized.sort(key=lambda item: item.name.lower())
+    owner = str(reader_control_dep.get_owner() or "door")
     return UserListResponse(
         users=serialized,
         last_scan=last_scan,
         reader_enabled=_is_web_reader_enabled(),
-        reader_state=_reader_state_out(reader_control_dep),
+        reader_state=ReaderStateOut(owner=owner),
     )
 
 
@@ -122,7 +100,7 @@ async def api_scan_card(
     payload: ScanRequest = Body(default_factory=ScanRequest),
     auth_service: AuthService = Depends(get_auth_service),
     emv_service: EMVCardService | None = Depends(get_emv_service),
-    reader_control_dep: ReaderControl = Depends(ReaderControl),
+    reader_control_dep: ReaderControl = Depends(get_reader_control),
     scan_lock: threading.Lock = Depends(get_scan_lock),
 ) -> ScanResponse | ScanErrorResponse:
     timeout = payload.timeout if payload.timeout is not None else 15
@@ -233,10 +211,11 @@ async def api_scan_card(
 
 @router.get("/reader", response_model=ReaderStateResponse)
 async def api_get_reader_state(
-    reader_control_dep: ReaderControl = Depends(ReaderControl),
+    reader_control_dep: ReaderControl = Depends(get_reader_control),
 ) -> ReaderStateResponse:
+    owner = str(reader_control_dep.get_owner() or "door")
     return ReaderStateResponse(
-        state=_reader_state_out(reader_control_dep),
+        state=ReaderStateOut(owner=owner),
         reader_enabled=_is_web_reader_enabled(),
     )
 
@@ -244,44 +223,42 @@ async def api_get_reader_state(
 @router.post("/reader/claim", response_model=ReaderClaimResponse)
 async def api_claim_reader(
     response: Response,
-    reader_control_dep: ReaderControl = Depends(ReaderControl),
+    reader_control_dep: ReaderControl = Depends(get_reader_control),
 ) -> ReaderClaimResponse:
-    state = reader_control_dep.get_state()
-    owner = state.get("owner")
+    owner = reader_control_dep.get_owner()
     if owner == "web":
         response.status_code = status.HTTP_200_OK
         return ReaderClaimResponse(
-            state=_reader_state_out(reader_control_dep),
+            state=ReaderStateOut(owner=owner),
             already_owned=True,
         )
-    new_state = reader_control_dep.set_owner("web", {"previous_owner": owner})
+    reader_control_dep.set_owner("web")
+    new_owner = str(reader_control_dep.get_owner() or "door")
     response.status_code = status.HTTP_200_OK
     return ReaderClaimResponse(
-        state=_reader_state_out(reader_control_dep),
+        state=ReaderStateOut(owner=new_owner),
         reader_enabled=_is_web_reader_enabled(),
-        updated=_reader_update_out(new_state),
     )
 
 
 @router.post("/reader/release", response_model=ReaderReleaseResponse)
 async def api_release_reader(
     response: Response,
-    reader_control_dep: ReaderControl = Depends(ReaderControl),
+    reader_control_dep: ReaderControl = Depends(get_reader_control),
 ) -> ReaderReleaseResponse:
-    state = reader_control_dep.get_state()
-    owner = state.get("owner")
+    owner = reader_control_dep.get_owner()
     if owner == "door":
         response.status_code = status.HTTP_200_OK
         return ReaderReleaseResponse(
-            state=_reader_state_out(reader_control_dep),
+            state=ReaderStateOut(owner=owner),
             already_released=True,
         )
-    new_state = reader_control_dep.reset_to_default()
+    reader_control_dep.reset_to_default()
+    new_owner = str(reader_control_dep.get_owner() or "door")
     response.status_code = status.HTTP_200_OK
     return ReaderReleaseResponse(
-        state=_reader_state_out(reader_control_dep),
+        state=ReaderStateOut(owner=new_owner),
         reader_enabled=_is_web_reader_enabled(),
-        updated=_reader_update_out(new_state),
     )
 
 

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 
 from app.services.auth_service import AuthService
 from app.services.emv_service import EMVCardService
+from app.services.reader_control import ReaderControl, get_reader_control
 
 _DEFAULT_DB_PATH = os.getenv("USBUTLER_USERS_DB", "users.json")
 _BASE_DIR = os.path.dirname(__file__)
@@ -27,6 +28,7 @@ _auth_service = AuthService(_DEFAULT_DB_PATH)
 _emv_service = EMVCardService() if _is_web_reader_enabled() else None
 _scan_lock = threading.Lock()
 _last_scan: "ScanSummary | None" = None
+_reader_control = get_reader_control()
 
 
 class IdentifierOut(BaseModel):
@@ -56,15 +58,6 @@ class UserOut(BaseModel):
 
 class ReaderStateOut(BaseModel):
     owner: str
-    owned_by_web: bool
-    owned_by_door: bool
-    updated_at: float | None = None
-
-
-class ReaderControlUpdate(BaseModel):
-    owner: str
-    updated_at: float | None = None
-    previous_owner: str | None = None
 
 
 class ScanSummary(BaseModel):
@@ -153,14 +146,12 @@ class ReaderClaimResponse(SuccessResponse):
     state: ReaderStateOut
     reader_enabled: bool | None = None
     already_owned: bool | None = None
-    updated: ReaderControlUpdate | None = None
 
 
 class ReaderReleaseResponse(SuccessResponse):
     state: ReaderStateOut
     reader_enabled: bool | None = None
     already_released: bool | None = None
-    updated: ReaderControlUpdate | None = None
 
 
 class RemoveIdentifierResponse(SuccessResponse):
@@ -191,6 +182,10 @@ def get_emv_service() -> EMVCardService | None:
 
 def get_scan_lock() -> threading.Lock:
     return _scan_lock
+
+
+def get_reader_control() -> ReaderControl:
+    return _reader_control
 
 
 def get_last_scan() -> ScanSummary | None:
