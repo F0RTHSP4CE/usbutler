@@ -412,6 +412,9 @@ class EMVCardService:
     def wait_for_card(self, timeout: int = 10) -> bool:
         return self.nfc_reader.wait_for_card(timeout=timeout)
 
+    def wait_for_card_removal(self, timeout: int = 10) -> bool:
+        return self.nfc_reader.wait_for_card_removal(timeout=timeout)
+
     def get_card_info(self) -> Optional[str]:
         atr_bytes = self._get_atr_bytes()
         return toHexString(atr_bytes) if atr_bytes else None

@@ -34,17 +34,11 @@ class DoorEvent:
 class DoorControlService:
     """Service for controlling the smart door lock"""
 
-    def __init__(self, auto_lock_delay: float = 3):
+    def __init__(self, auto_lock_delay: float = 0.5):
         self.is_open = False
         self.auto_lock_delay = float(auto_lock_delay)
         self.last_user: Optional[User] = None
         self.event_history = []
-        try:
-            reopen_delay = float(os.getenv("USBUTLER_DOOR_REOPEN_DELAY", "5"))
-        except (TypeError, ValueError):
-            reopen_delay = 5.0
-        self._repeat_open_cooldown = max(0.0, reopen_delay)
-        self._last_open_by_identifier: dict[str, float] = {}
 
         self._gpio_pin = int(os.getenv("USBUTLER_DOOR_GPIO", "17"))
         self._active_high = os.getenv(
@@ -70,22 +64,7 @@ class DoorControlService:
         Open the door for an authenticated user
         Returns DoorEvent for logging/audit purposes
         """
-        identifier_key = self._get_identifier_key(user)
-        cooldown = self._repeat_open_cooldown
-
         with self._state_lock:
-            now = time.time()
-            last_time = self._last_open_by_identifier.get(identifier_key)
-            if cooldown > 0 and last_time is not None and now - last_time < cooldown:
-                remaining = cooldown - (now - last_time)
-                print(
-                    f"⏱️ Door reopen cooldown active for {user.name} ({user.access_level}); "
-                    f"skipping unlock ({remaining:.1f}s remaining)."
-                )
-                event = DoorEvent(user, "cooldown_skip", timestamp=now)
-                self.event_history.append(event)
-                return event
-
             print(f"🔓 DOOR OPENED for {user.name} ({user.access_level})")
             self.is_open = True
             self.last_user = user
@@ -93,7 +72,6 @@ class DoorControlService:
 
             event = DoorEvent(user, "open")
             self.event_history.append(event)
-            self._last_open_by_identifier[identifier_key] = event.timestamp
 
             # Schedule auto-lock
             self._schedule_auto_lock()
@@ -206,12 +184,6 @@ class DoorControlService:
             daemon=True,
         )
         notifier_thread.start()
-
-    def _get_identifier_key(self, user: User) -> str:
-        identifier = user.primary_identifier()
-        if identifier and identifier.value:
-            return identifier.value
-        return user.user_id
 
     def _dispatch_unlock_notifications(self, event: DoorEvent) -> None:
         try:

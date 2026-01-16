@@ -273,29 +273,18 @@ class TestDoorControlService(unittest.TestCase):
         self.assertIn("****3456", parse.unquote_plus(payload))
 
     @patch.dict(os.environ, {"USBUTLER_DOOR_REOPEN_DELAY": "5"}, clear=False)
-    def test_open_door_skips_within_cooldown(self):
+    def test_open_door_allows_reopen(self):
         service = DoorControlService(auto_lock_delay=0)
         user = User("repeat-user", "Repeat User", "user")
         user.add_identifier(Identifier("REPEAT1234", "UID", primary=True))
 
-        time_sequence = [0.0, 0.0, 0.1]
-
-        def fake_time():
-            return time_sequence.pop(0)
-
-        with patch("app.services.door_service.time.time", side_effect=fake_time), patch.object(
-            service, "_notify_unlock"
-        ) as mock_notify:
+        with patch.object(service, "_notify_unlock") as mock_notify:
             first_event = service.open_door(user)
             second_event = service.open_door(user)
 
         self.assertEqual(first_event.event_type, "open")
-        self.assertEqual(second_event.event_type, "cooldown_skip")
-        mock_notify.assert_called_once_with(first_event)
-        self.assertEqual(
-            service._last_open_by_identifier[user.primary_identifier().value], first_event.timestamp
-        )
-        self.assertIs(service.event_history[-1], second_event)
+        self.assertEqual(second_event.event_type, "open")
+        self.assertEqual(mock_notify.call_count, 2)
 
 
 @unittest.skipUnless(EMV_AVAILABLE, "smartcard/pyscard dependency not available")

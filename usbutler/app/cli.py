@@ -123,7 +123,8 @@ class SmartDoorLockController:
             print(f"Error during authentication cycle: {e}")
             return False
         finally:
-            # Always disconnect from card
+            # Always wait for card removal and disconnect from card
+            self.emv_service.wait_for_card_removal(timeout=10)
             self.emv_service.disconnect()
             self._cooperative_pause(1)
 
@@ -201,6 +202,7 @@ class SmartDoorLockController:
             print(f"Error adding user: {e}")
             return False
         finally:
+            self.emv_service.wait_for_card_removal(timeout=10)
             self.emv_service.disconnect()
 
     def show_system_status(self):

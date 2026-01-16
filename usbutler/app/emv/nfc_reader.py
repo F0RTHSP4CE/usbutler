@@ -11,6 +11,7 @@ from smartcard.System import readers
 from smartcard.CardConnection import CardConnection
 from smartcard.util import toHexString, toBytes
 from smartcard.Exceptions import CardConnectionException, NoCardException
+from smartcard.scard import SCARD_STATE_PRESENT
 
 
 class NFCReader:
@@ -136,6 +137,44 @@ class NFCReader:
                 print("This might indicate the USB card reader was disconnected.")
                 self._timed_pause(min(remaining, 2.0))
                 continue
+
+    def wait_for_card_removal(self, timeout: int = 30) -> bool:
+        """Wait until the currently connected card is removed."""
+        start_time = time.monotonic()
+
+        while True:
+            elapsed = time.monotonic() - start_time
+            if elapsed >= timeout:
+                return False
+
+            with self._io_lock:
+                connection = self.connection
+
+            if connection is None:
+                return True
+
+            if hasattr(connection, "wait_for_card_remove"):
+                try:
+                    connection.wait_for_card_remove()
+                except Exception:
+                    pass
+
+            removed = False
+            try:
+                state, _protocol, _atr = connection.getStatus()
+                removed = not (state & SCARD_STATE_PRESENT)
+            except Exception:
+                try:
+                    atr = connection.getATR()
+                    removed = not atr
+                except Exception:
+                    removed = True
+
+            if removed:
+                self.disconnect()
+                return True
+
+            self._timed_pause(0.2)
 
     def is_connected(self) -> bool:
         """Check if we have an active connection to a card"""
