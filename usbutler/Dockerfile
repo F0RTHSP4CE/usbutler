@@ -1,5 +1,5 @@
 # Single-stage build
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 # Set environment variables
 ENV UV_CACHE_DIR=/tmp/uv-cache
@@ -13,11 +13,16 @@ RUN apt-get update && apt-get install -y \
     libpcsclite1 \
     pcscd \
     pcsc-tools \
+    python3-pyscard \
+    # Required for libgpiod (GPIO control)
+    libgpiod-dev \
+    python3-libgpiod \
     # Build tools
     gcc \
     g++ \
     make \
     pkg-config \
+    swig \
     # Process supervisor and USB monitoring
     supervisor \
     udev \

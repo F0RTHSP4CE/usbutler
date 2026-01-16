@@ -1,4 +1,4 @@
-"""Door control service with optional pigpio hardware integration."""
+"""Door control service with libgpiod hardware integration."""
 
 import datetime
 import logging
@@ -11,9 +11,12 @@ from urllib import parse, request
 from app.services.auth_service import User
 
 try:
-    import pigpio  # type: ignore
+    import gpiod  # type: ignore
+    from gpiod.line import Direction, Value  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
-    pigpio = None
+    gpiod = None
+    Direction = None  # type: ignore
+    Value = None  # type: ignore
 
 
 logger = logging.getLogger(__name__)
@@ -50,11 +53,11 @@ class DoorControlService:
             "off",
             "no",
         }
-        self._pigpiod_host = os.getenv("USBUTLER_PIGPIOD_HOST", "localhost")
-        self._pigpiod_port = int(os.getenv("USBUTLER_PIGPIOD_PORT", "8888"))
+        self._gpio_chip = os.getenv("USBUTLER_GPIO_CHIP", "/dev/gpiochip0")
 
-        self._pi = None
-        self._pigpio_enabled = False
+        self._chip = None
+        self._line = None
+        self._gpio_enabled = False
         self._state_lock = threading.Lock()
         self._auto_lock_timer: Optional[threading.Timer] = None
 
@@ -157,41 +160,40 @@ class DoorControlService:
             self.lock_door()
 
     def _initialize_gpio(self) -> None:
-        if pigpio is None:
-            print("ℹ️ pigpio module not available; door service will run in simulation mode.")
+        if gpiod is None:
+            print("ℹ️ gpiod module not available; door service will run in simulation mode.")
             return
         try:
-            pi = pigpio.pi(self._pigpiod_host, self._pigpiod_port)
-        except pigpio.error as exc:  # pragma: no cover - connection failure path
-            print(f"⚠️ Failed to connect to pigpiod ({exc}); running in simulation mode.")
-            return
-
-        if not pi.connected:
-            print(
-                f"⚠️ Unable to connect to pigpiod at {self._pigpiod_host}:{self._pigpiod_port}; "
-                "running in simulation mode."
+            self._chip = gpiod.Chip(self._gpio_chip)  # type: ignore
+            line_settings = gpiod.LineSettings(direction=Direction.OUTPUT)  # type: ignore
+            line_config = gpiod.LineConfig()  # type: ignore
+            line_config.add_line_settings([self._gpio_pin], line_settings)  # type: ignore
+            self._line = self._chip.request_lines(  # type: ignore
+                consumer="usbutler",
+                config=line_config
             )
-            return
-
-        self._pi = pi
-        self._pigpio_enabled = True
-        self._pi.set_mode(self._gpio_pin, pigpio.OUTPUT)
-        self._set_gpio(False)
-        print(
-            f"🔌 pigpio connected ({self._pigpiod_host}:{self._pigpiod_port}) on GPIO {self._gpio_pin} "
-            f"({ 'active-high' if self._active_high else 'active-low' })."
-        )
+            self._gpio_enabled = True
+            self._set_gpio(False)
+            print(
+                f"🔌 libgpiod initialized on {self._gpio_chip} GPIO {self._gpio_pin} "
+                f"({'active-high' if self._active_high else 'active-low'})."
+            )
+        except Exception as exc:
+            print(f"⚠️ Failed to initialize GPIO ({exc}); running in simulation mode.")
+            self._gpio_enabled = False
+            self._chip = None
+            self._line = None
 
     def _set_gpio(self, unlocked: bool) -> None:
-        if not self._pigpio_enabled or not self._pi:
+        if not self._gpio_enabled or not self._line:
             return
         if unlocked:
-            desired_level = 1 if self._active_high else 0
+            desired_level = Value.ACTIVE if self._active_high else Value.INACTIVE  # type: ignore
         else:
-            desired_level = 0 if self._active_high else 1
+            desired_level = Value.INACTIVE if self._active_high else Value.ACTIVE  # type: ignore
         try:
-            self._pi.write(self._gpio_pin, desired_level)
-        except pigpio.error as exc:  # pragma: no cover - hardware failure
+            self._line.set_value(self._gpio_pin, desired_level)  # type: ignore
+        except Exception as exc:  # pragma: no cover - hardware failure
             print(f"⚠️ Failed to toggle GPIO {self._gpio_pin}: {exc}")
 
     def _notify_unlock(self, event: DoorEvent) -> None:

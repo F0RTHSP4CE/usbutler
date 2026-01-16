@@ -6,6 +6,7 @@ services:
     privileged: true
     devices:
       - /dev/bus/usb:/dev/bus/usb
+      - /dev/gpiochip0:/dev/gpiochip0
     volumes:
       - ./config:/app/config:ro
       - /run/udev:/run/udev:ro
@@ -16,8 +17,7 @@ services:
       - USBUTLER_WEB_ENABLE_READER=1
       - USBUTLER_DOOR_GPIO=8
       - USBUTLER_DOOR_ACTIVE_HIGH=0
-      - USBUTLER_PIGPIOD_HOST=host.docker.internal
-      - USBUTLER_PIGPIOD_PORT=8888
+      - USBUTLER_GPIO_CHIP=/dev/gpiochip0
       - "USBUTLER_LED_ENDPOINT=http://ledka.lo.f0rth.space/text"
       - "USBUTLER_LED_FONT=BMplain"
       - "USBUTLER_LED_TIMEOUT=500"
@@ -29,8 +29,6 @@ services:
       - "USBUTLER_DOOR_REOPEN_DELAY=5"
     ports:
       - "8000:8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
 volumes:
   usbutler-data:

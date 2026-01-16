@@ -27,26 +27,20 @@ docker compose up --build -d
 
 This brings up a single container named `usbutler` that runs both the door controller and the web UI. It mounts the `usbutler-data` volume for the shared user database and exposes port 8000 for the browser dashboard.
 
-### Physical door relay via pigpio
+### Physical door relay via libgpiod
 
-The controller can drive a single-pin relay on a Raspberry Pi using the [`pigpiod`](https://abyz.me.uk/rpi/pigpio/pigpiod.html) daemon. The container connects to the host daemon over TCP, so ensure these steps are in place on the Pi:
+The controller can drive a single-pin relay on a Raspberry Pi using libgpiod, the modern Linux GPIO interface. The container directly accesses the GPIO device, so ensure these steps are in place on the Pi:
 
-1. Install pigpio tools (usually already present on Raspberry Pi OS):
+1. Ensure libgpiod is installed (usually already present on recent Raspberry Pi OS):
 	```bash
 	sudo apt update
-	sudo apt install pigpio
+	sudo apt install libgpiod2 gpiod
 	```
-2. Allow remote connections so the container can reach the daemon:
-	```bash
-	sudo systemctl stop pigpiod
-	sudo pigpiod -n 0.0.0.0
-	```
-	To make this persistent, edit `/etc/systemd/system/pigpiod.service.d/override.conf` with `ExecStart=/usr/bin/pigpiod -n 0.0.0.0` and run `sudo systemctl daemon-reload && sudo systemctl restart pigpiod`.
+2. Verify your user has GPIO access permissions. The container runs with privileged access to `/dev/gpiochip0`.
 3. Update `.env` (or the `docker-compose.yml`) with the GPIO wiring details:
 	- `USBUTLER_DOOR_GPIO` — BCM pin number driving your relay (default `17`).
 	- `USBUTLER_DOOR_ACTIVE_HIGH` — set to `1` if the relay energises on a high output (default), or `0` for active-low boards.
-	- `USBUTLER_PIGPIOD_HOST` — defaults to `host.docker.internal`, which resolves to the Docker host thanks to the compose `extra_hosts` entry.
-	- `USBUTLER_PIGPIOD_PORT` — pigpiod TCP port (default `8888`).
+	- `USBUTLER_GPIO_CHIP` — GPIO chip device path (default `/dev/gpiochip0`).
 	- `USBUTLER_DOOR_REOPEN_DELAY` — minimum seconds to wait before unlocking again with the same card (default `5`). Attempts during this cooldown are ignored.
 
 With these values configured the service will toggle the relay when a user is authenticated and re-lock automatically after the configured delay.
