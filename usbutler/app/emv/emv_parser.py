@@ -125,7 +125,7 @@ class EMVParser:
 
         try:
             if tag == EMVTags.PAN:
-                # Primary Account Number
+                # Account Number (PAN)
                 return data[:length].hex().upper()
 
             elif tag == EMVTags.CARDHOLDER_NAME:

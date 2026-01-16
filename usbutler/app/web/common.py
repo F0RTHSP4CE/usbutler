@@ -34,7 +34,6 @@ class IdentifierOut(BaseModel):
 
     value: str
     type: str
-    primary: bool
     metadata: dict
 
     @computed_field

@@ -36,7 +36,7 @@ class SmartDoorLockController:
 
         try:
             scan_result = self.emv_service.read_card_data()
-            identifier = scan_result.primary_identifier()
+            identifier = scan_result.identifier()
             if not identifier:
                 return False
 

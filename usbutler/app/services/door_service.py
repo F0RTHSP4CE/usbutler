@@ -257,10 +257,7 @@ class DoorControlService:
 
         identifier = None
         if event.user and event.user.identifiers:
-            identifier = next(
-                (item for item in event.user.identifiers if item.primary),
-                event.user.identifiers[0],
-            )
+            identifier = event.user.identifiers[0]
         identifier_type = identifier.type if identifier else "unknown"
         identifier_masked = identifier.mask() if identifier else "unknown"
 

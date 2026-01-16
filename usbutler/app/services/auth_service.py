@@ -50,12 +50,10 @@ class Identifier:
         self,
         value: str,
         identifier_type: str = "PAN",
-        primary: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
     ):
         self.value = value
         self.type = identifier_type or "PAN"
-        self.primary = primary
         self.metadata: Dict[str, Any] = metadata.copy() if metadata else {}
 
     def mask(self) -> str:
@@ -67,7 +65,6 @@ class Identifier:
         return {
             "value": self.value,
             "type": self.type,
-            "primary": self.primary,
             "metadata": self.metadata,
         }
 
@@ -77,7 +74,6 @@ class Identifier:
         return cls(
             value=str(data.get("value", "")),
             identifier_type=str(data.get("type", "PAN")),
-            primary=bool(data.get("primary", False)),
             metadata=metadata if isinstance(metadata, dict) else None,
         )
 
@@ -98,10 +94,6 @@ class User:
         self.access_level = access_level
         self.active = active
         self.identifiers: List[Identifier] = identifiers[:] if identifiers else []
-        if self.identifiers and not any(
-            identifier.primary for identifier in self.identifiers
-        ):
-            self.identifiers[0].primary = True
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -126,20 +118,10 @@ class User:
         )
         return user
 
-    def add_identifier(
-        self, identifier: Identifier, make_primary: bool = False
-    ) -> None:
+    def add_identifier(self, identifier: Identifier) -> None:
         if any(item.value == identifier.value for item in self.identifiers):
             return
-        if make_primary or not self.identifiers:
-            for existing in self.identifiers:
-                existing.primary = False
-            identifier.primary = True
         self.identifiers.append(identifier)
-        if identifier.primary:
-            for other in self.identifiers:
-                if other is not identifier:
-                    other.primary = False
 
     def remove_identifier(self, value: str) -> bool:
         removed = False
@@ -150,8 +132,6 @@ class User:
                 continue
             remaining.append(identifier)
         self.identifiers = remaining
-        if self.identifiers and not any(item.primary for item in self.identifiers):
-            self.identifiers[0].primary = True
         return removed
 
 
@@ -200,7 +180,6 @@ class AuthService:
             Identifier(
                 identifier_value,
                 identifier_type,
-                primary=True,
                 metadata=metadata,
             )
         )
@@ -214,7 +193,6 @@ class AuthService:
         user_id: str,
         identifier_value: str,
         identifier_type: str = "UID",
-        make_primary: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> User:
         if identifier_value in self.identifier_index:
@@ -229,7 +207,6 @@ class AuthService:
             Identifier(
                 identifier_value,
                 identifier_type,
-                primary=make_primary,
                 metadata=metadata,
             )
         )

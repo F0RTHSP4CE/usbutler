@@ -344,13 +344,13 @@ def derive_identifiers(
         return identifiers
 
     if pan:
-        identifiers["primary"] = {"type": "PAN", "value": pan}
+        identifiers["identifier"] = {"type": "PAN", "value": pan}
         if uid:
             identifiers["secondary"] = {"type": "UID", "value": uid}
     elif uid:
         tag_upper = (tag_type or "").upper()
         if "UID" in tag_upper or is_mifare_like(tag_type, atr_card_type):
-            identifiers["primary"] = {"type": "UID", "value": uid}
+            identifiers["identifier"] = {"type": "UID", "value": uid}
 
     return identifiers
 
@@ -377,16 +377,16 @@ class CardScanResult:
     card_type: str = "Unknown Card Type"
     identifiers: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
-    def primary_identifier(self) -> Optional[str]:
-        primary = self.identifiers.get("primary")
-        if primary:
-            return primary.get("value")
+    def identifier(self) -> Optional[str]:
+        identifier = self.identifiers.get("identifier")
+        if identifier:
+            return identifier.get("value")
         return None
 
-    def primary_identifier_type(self) -> Optional[str]:
-        primary = self.identifiers.get("primary")
-        if primary:
-            return primary.get("type")
+    def identifier_type(self) -> Optional[str]:
+        identifier = self.identifiers.get("identifier")
+        if identifier:
+            return identifier.get("type")
         return None
 
 
@@ -427,7 +427,7 @@ class EMVCardService:
         try:
             scan_result = self.read_card_data()
             self.last_scan = scan_result
-            return scan_result.primary_identifier()
+            return scan_result.identifier()
         except Exception as exc:
             print(f"Error reading card identifier: {exc}")
             return None

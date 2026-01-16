@@ -167,7 +167,7 @@ async def api_scan_card(
         finally:
             emv_service.disconnect()
 
-        identifier = scan.primary_identifier()
+        identifier = scan.identifier()
         if not identifier:
             response.status_code = status.HTTP_200_OK
             return ScanErrorResponse(
@@ -190,7 +190,7 @@ async def api_scan_card(
 
         response_model = ScanResponse(
             identifier=identifier,
-            identifier_type=scan.primary_identifier_type(),
+            identifier_type=scan.identifier_type(),
             tag_type=scan.tag_type,
             card_type=scan.card_type,
             uid=scan.uid,
@@ -311,7 +311,6 @@ async def api_add_user(
                 user_id,
                 identifier,
                 identifier_type,
-                False,
                 metadata,
             )
             response.status_code = status.HTTP_200_OK
