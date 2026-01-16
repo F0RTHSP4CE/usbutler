@@ -365,7 +365,7 @@ class SmartDoorLockController:
 def _run_web_server(
     reader_control: ReaderControl, host: str, port: int, debug: bool
 ) -> None:
-    from app.web.server import create_app
+    from app.web.app import create_app
     import uvicorn
 
     app = create_app(reader_control)

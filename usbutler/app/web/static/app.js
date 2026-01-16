@@ -57,7 +57,7 @@
     if (metadata.issuer) {
       items.push(`<div><span class="text-muted">Issuer:</span> ${metadata.issuer}</div>`);
     }
-    const expiry = metadata.expiry_formatted || formatExpiry(metadata.expiry);
+    const expiry = metadata.expiry
     if (expiry) {
       items.push(`<div><span class="text-muted">Expiry:</span> ${expiry}</div>`);
     }
@@ -388,9 +388,6 @@
     if (!metadataView.expiry && payload.expiry) {
       metadataView.expiry = payload.expiry;
     }
-    if (!metadataView.expiry_formatted && payload.expiry_formatted) {
-      metadataView.expiry_formatted = payload.expiry_formatted;
-    }
     if (!metadataView.card_type && payload.card_type) {
       metadataView.card_type = payload.card_type;
     }
@@ -420,7 +417,7 @@
       ? `Linked to <strong>${payload.existing_user_name}</strong>.`
       : "Card not yet assigned.";
     const issuer = payload.metadata?.issuer;
-    const expiry = payload.metadata?.expiry_formatted || formatExpiry(payload.metadata?.expiry);
+    const expiry = formatExpiry(payload.metadata?.expiry);
     const extraLines = [
       issuer ? `<p class="mb-0 small text-muted">Issuer: ${issuer}</p>` : "",
       expiry ? `<p class="mb-0 small text-muted">Expiry: ${expiry}</p>` : "",
@@ -659,14 +656,14 @@
   assignNewRadio?.addEventListener("change", () => setAssignMode("new"));
   assignExistingRadio?.addEventListener("change", () => setAssignMode("existing"));
   existingUserSelect?.addEventListener("change", updateSubmitState);
-  makePrimaryCheckbox?.addEventListener("change", () => {});
+  makePrimaryCheckbox?.addEventListener("change", () => { });
   document.querySelector("#name")?.addEventListener("input", updateSubmitState);
 
   cardMetaContainer?.addEventListener("click", (event) => {
-  const button = event.target.closest(".toggle-sensitive");
-  if (!button) return;
-  const container = resolveSensitiveContainer(button);
-  if (!container) return;
+    const button = event.target.closest(".toggle-sensitive");
+    if (!button) return;
+    const container = resolveSensitiveContainer(button);
+    if (!container) return;
     const showingFull = toggleSensitiveDisplay(container);
     button.textContent = showingFull ? "Hide" : "Show";
   });
@@ -823,8 +820,8 @@
       payload.metadata = metadataPayload;
     }
 
-  submitBtn.disabled = true;
-  submitBtn.textContent = "Saving…";
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Saving…";
 
     try {
       const response = await fetch("/api/users", {
