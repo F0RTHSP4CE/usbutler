@@ -23,8 +23,8 @@ services:
       - "USBUTLER_LED_TIMEOUT=500"
       - "USBUTLER_LED_POSITION_X=10"
       - "USBUTLER_LED_POSITION_Y=5"
-      - "USBUTLER_TG_BASE_URL=https://api.telegram.org/bot6806760620:AAFn7L68xamSCV-P0yqe4b0N2gPovW8EyTg/sendMessage"
-      - "USBUTLER_TG_CHAT_ID=-1002070662990"
+      # - "USBUTLER_TG_BASE_URL=https://api.telegram.org/bot6806760620:AAFn7L68xamSCV-P0yqe4b0N2gPovW8EyTg/sendMessage"
+      # - "USBUTLER_TG_CHAT_ID=-1002070662990"
       - "USBUTLER_TG_THREAD_ID=3"
       - "USBUTLER_DOOR_REOPEN_DELAY=5"
     ports:

@@ -34,7 +34,7 @@ class DoorEvent:
 class DoorControlService:
     """Service for controlling the smart door lock"""
 
-    def __init__(self, auto_lock_delay: float = 0.25):
+    def __init__(self, auto_lock_delay: float = 3):
         self.is_open = False
         self.auto_lock_delay = float(auto_lock_delay)
         self.last_user: Optional[User] = None
@@ -47,7 +47,9 @@ class DoorControlService:
         self._last_open_by_identifier: dict[str, float] = {}
 
         self._gpio_pin = int(os.getenv("USBUTLER_DOOR_GPIO", "17"))
-        self._active_high = os.getenv("USBUTLER_DOOR_ACTIVE_HIGH", "1").strip().lower() not in {
+        self._active_high = os.getenv(
+            "USBUTLER_DOOR_ACTIVE_HIGH", "1"
+        ).strip().lower() not in {
             "0",
             "false",
             "off",
@@ -146,7 +148,9 @@ class DoorControlService:
             self._auto_lock_timer.cancel()
 
         print(f"Door will auto-lock in {self.auto_lock_delay} seconds...")
-        self._auto_lock_timer = threading.Timer(self.auto_lock_delay, self._auto_lock_callback)
+        self._auto_lock_timer = threading.Timer(
+            self.auto_lock_delay, self._auto_lock_callback
+        )
         self._auto_lock_timer.daemon = True
         self._auto_lock_timer.start()
 
@@ -161,16 +165,15 @@ class DoorControlService:
 
     def _initialize_gpio(self) -> None:
         if gpiod is None:
-            print("ℹ️ gpiod module not available; door service will run in simulation mode.")
+            print(
+                "ℹ️ gpiod module not available; door service will run in simulation mode."
+            )
             return
         try:
             self._chip = gpiod.Chip(self._gpio_chip)  # type: ignore
             line_settings = gpiod.LineSettings(direction=Direction.OUTPUT)  # type: ignore
-            line_config = gpiod.LineConfig()  # type: ignore
-            line_config.add_line_settings([self._gpio_pin], line_settings)  # type: ignore
             self._line = self._chip.request_lines(  # type: ignore
-                consumer="usbutler",
-                config=line_config
+                config={self._gpio_pin: line_settings}, consumer="usbutler"
             )
             self._gpio_enabled = True
             self._set_gpio(False)
@@ -275,7 +278,9 @@ class DoorControlService:
         except (TypeError, ValueError):
             request_timeout = 5.0
 
-        timestamp = datetime.datetime.fromtimestamp(event.timestamp, tz=datetime.timezone.utc).astimezone()
+        timestamp = datetime.datetime.fromtimestamp(
+            event.timestamp, tz=datetime.timezone.utc
+        ).astimezone()
         timestamp_text = timestamp.strftime("%Y-%m-%d %H:%M:%S %Z")
 
         identifier = event.user.primary_identifier() if event.user else None

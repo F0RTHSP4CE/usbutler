@@ -16,7 +16,6 @@ RUN apt-get update && apt-get install -y \
     python3-pyscard \
     # Required for libgpiod (GPIO control)
     libgpiod-dev \
-    python3-libgpiod \
     # Build tools
     gcc \
     g++ \
