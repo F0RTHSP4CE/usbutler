@@ -100,12 +100,6 @@ python -m app.cli
 
 This starts the background door loop and serves the web UI on <http://localhost:8000>. Use the **Unlock reader** button in the sidebar to switch the hardware from the door loop to the web view when you need to enrol cards, then click **Return reader** so the door daemon resumes ownership.
 
-Other useful modes:
-
-- `python -m app.cli --door-only` — legacy behaviour; runs just the door loop without the web UI.
-- `python -m app.cli --web-only` — serves the web UI by itself (for development workstations without the door daemon).
-- `python -m app.cli --status` — prints system status and exits.
-
 The UI uses Bootstrap 5 and offers card scanning, user enrollment, activation toggles, and removal actions. Ensure the NFC reader is connected to the host before starting the server.
 
 ## REST API
