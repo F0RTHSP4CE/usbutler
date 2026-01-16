@@ -12,6 +12,7 @@ from urllib import parse
 from app.services.auth_service import AuthenticationService, Identifier, User
 from app.services.emv_service import is_mifare_like
 from app.services.door_service import DoorControlService
+
 try:
     from app.services.emv_service import CardScanResult, EMVCardService
 
@@ -90,13 +91,17 @@ class TestAuthenticationService(unittest.TestCase):
         self.assertEqual(len(users), 1)
         user = users[0]
 
-        added = self.auth_service.add_identifier_to_user(user.user_id, "A1B2C3D4", "UID")
+        added = self.auth_service.add_identifier_to_user(
+            user.user_id, "A1B2C3D4", "UID"
+        )
         self.assertTrue(added)
 
         refreshed = self.auth_service.get_user(user.user_id)
         self.assertIsNotNone(refreshed)
         if refreshed:
-            identifiers = {identifier.value: identifier for identifier in refreshed.identifiers}
+            identifiers = {
+                identifier.value: identifier for identifier in refreshed.identifiers
+            }
             self.assertIn("1234567890123456", identifiers)
             self.assertIn("A1B2C3D4", identifiers)
             self.assertTrue(identifiers["1234567890123456"].primary)
@@ -113,14 +118,18 @@ class TestAuthenticationService(unittest.TestCase):
         refreshed = self.auth_service.get_user(user.user_id)
         self.assertIsNotNone(refreshed)
         if refreshed:
-            primaries = [identifier for identifier in refreshed.identifiers if identifier.primary]
+            primaries = [
+                identifier for identifier in refreshed.identifiers if identifier.primary
+            ]
             self.assertEqual(len(primaries), 1)
             self.assertEqual(primaries[0].value, "A1B2C3D4")
 
     def test_remove_identifier_removes_user_if_last(self):
         self.auth_service.add_user("1234567890123456", "Test User", "admin")
         user = next(iter(self.auth_service.list_users().values()))
-        removed = self.auth_service.remove_identifier_from_user(user.user_id, "1234567890123456")
+        removed = self.auth_service.remove_identifier_from_user(
+            user.user_id, "1234567890123456"
+        )
         self.assertTrue(removed)
         self.assertEqual(self.auth_service.get_user_count(), 0)
 
@@ -159,7 +168,9 @@ class TestDoorControlService(unittest.TestCase):
             auto_lock_delay=0.2
         )  # Short delay for testing
         self.test_user = User("1234567890123456", "Test User", "admin")
-        self.test_user.add_identifier(Identifier("1234567890123456", "PAN", primary=True))
+        self.test_user.add_identifier(
+            Identifier("1234567890123456", "PAN", primary=True)
+        )
 
     def tearDown(self):
         self.pigpio_patcher.stop()
@@ -316,7 +327,6 @@ class TestEMVCardService(unittest.TestCase):
         with patch.object(self.emv_service, "read_card_data", return_value=scan):
             identifier = self.emv_service.read_card_pan()
 
-
             class TestEmvHelpers(unittest.TestCase):
                 def test_is_mifare_like_recognises_emv(self):
                     self.assertFalse(
@@ -325,6 +335,7 @@ class TestEMVCardService(unittest.TestCase):
                             "EMV or ISO 14443-4 (e.g., DESFire)",
                         )
                     )
+
             self.assertEqual(identifier, "4111111111111111")
             self.assertEqual(self.emv_service.last_scan, scan)
 
@@ -387,7 +398,9 @@ class TestEMVCardService(unittest.TestCase):
             0x6A,
         ]
 
-        with patch.object(self.emv_service, "_get_atr_bytes", return_value=mifare_atr), patch.object(
+        with patch.object(
+            self.emv_service, "_get_atr_bytes", return_value=mifare_atr
+        ), patch.object(
             self.emv_service, "_get_uid", return_value="01020304"
         ), patch.object(
             self.emv_service,
