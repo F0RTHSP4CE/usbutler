@@ -21,7 +21,9 @@ class SmartDoorLockController:
     Coordinates between EMV reading, authentication, and door control services.
     """
 
-    def __init__(self, reader_control: Optional[ReaderControl] = None, ensure_owner: bool = True):
+    def __init__(
+        self, reader_control: Optional[ReaderControl] = None, ensure_owner: bool = True
+    ):
         # Initialize all services
         self.emv_service = EMVCardService()
         db_path = os.getenv("USBUTLER_USERS_DB", "users.json")
@@ -32,7 +34,9 @@ class SmartDoorLockController:
             initial_owner = self.reader_control.get_owner()
             if initial_owner != "door":
                 previous_owner = initial_owner
-                self.reader_control.set_owner("door", {"previous_owner": previous_owner})
+                self.reader_control.set_owner(
+                    "door", {"previous_owner": previous_owner}
+                )
                 print(
                     "\n🔁 Reader ownership reset to door service (previous owner: "
                     f"{previous_owner or 'unknown'})."
@@ -93,7 +97,11 @@ class SmartDoorLockController:
 
             print(f"Card type (ATR-derived): {scan_result.card_type}")
             print(f"Tag type: {scan_result.tag_type}")
-            if scan_result.uid and identifier_type != "UID" and not scan_result.tokenized:
+            if (
+                scan_result.uid
+                and identifier_type != "UID"
+                and not scan_result.tokenized
+            ):
                 print(f"UID: {scan_result.uid}")
             if scan_result.pan and identifier_type == "PAN":
                 print(f"PAN: {masked_identifier}")
@@ -167,7 +175,9 @@ class SmartDoorLockController:
             if scan_result.pan and scan_result.pan != identifier:
                 print(f"PAN (raw): {scan_result.pan}")
             if scan_result.tokenized:
-                print("⚠️ Tokenized/HCE card detected; identifier may change between taps.")
+                print(
+                    "⚠️ Tokenized/HCE card detected; identifier may change between taps."
+                )
 
             # Check if user already exists
             existing_user = self.auth_service.authenticate_user(identifier)
@@ -245,9 +255,7 @@ class SmartDoorLockController:
                     for identifier in user.identifiers:
                         if identifier is primary:
                             continue
-                        print(
-                            f"     ↳ {identifier.type}: {identifier.mask()}"
-                        )
+                        print(f"     ↳ {identifier.type}: {identifier.mask()}")
 
     def run(self):
         """Main application loop"""
@@ -266,13 +274,17 @@ class SmartDoorLockController:
 
                 if self.reader_control.get_owner() != "door":
                     if not self._reader_reserved:
-                        print("🔌 Reader reserved by web UI; pausing door service scans.")
+                        print(
+                            "🔌 Reader reserved by web UI; pausing door service scans."
+                        )
                         self._reader_reserved = True
                     self._cooperative_pause(1)
                     continue
 
                 if self._reader_reserved:
-                    print("✅ Reader ownership returned to door service; resuming scans.")
+                    print(
+                        "✅ Reader ownership returned to door service; resuming scans."
+                    )
                     self._reader_reserved = False
 
                 self.run_authentication_cycle()
@@ -342,9 +354,7 @@ class SmartDoorLockController:
                 for identifier in user.identifiers:
                     masked = identifier.mask()
                     marker = " (Primary)" if identifier.primary else ""
-                    print(
-                        f"Identifier [{identifier.type}]: {masked}{marker}"
-                    )
+                    print(f"Identifier [{identifier.type}]: {masked}{marker}")
             else:
                 print("Identifier: (none)")
             print(f"Access Level: {user.access_level}")
@@ -352,18 +362,27 @@ class SmartDoorLockController:
             print("-" * 60)
 
 
-def _run_web_server(reader_control: ReaderControl, host: str, port: int, debug: bool) -> None:
+def _run_web_server(
+    reader_control: ReaderControl, host: str, port: int, debug: bool
+) -> None:
     from app.web.server import create_app
+    import uvicorn
 
     app = create_app(reader_control)
-    app.run(host=host, port=port, debug=debug, use_reloader=False)
+    uvicorn.run(app, host=host, port=port, log_level="debug" if debug else "info")
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Smart Door Controller")
-    parser.add_argument("--add-user", action="store_true", help="Interactively enroll a new user")
-    parser.add_argument("--status", action="store_true", help="Print system status and exit")
-    parser.add_argument("--manage", action="store_true", help="Enter interactive management menu")
+    parser.add_argument(
+        "--add-user", action="store_true", help="Interactively enroll a new user"
+    )
+    parser.add_argument(
+        "--status", action="store_true", help="Print system status and exit"
+    )
+    parser.add_argument(
+        "--manage", action="store_true", help="Enter interactive management menu"
+    )
     parser.add_argument(
         "--door-only",
         action="store_true",
@@ -393,7 +412,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--web-debug",
         action="store_true",
-        help="Run the Flask development server in debug mode",
+        help="Run the web server with debug logging",
     )
     return parser.parse_args()
 
@@ -434,7 +453,9 @@ def main():
 
     # Default or explicit combined mode
     print("🔀 Starting door service and web UI (combined mode)...")
-    door_thread = threading.Thread(target=controller.run, name="DoorController", daemon=True)
+    door_thread = threading.Thread(
+        target=controller.run, name="DoorController", daemon=True
+    )
     door_thread.start()
 
     try:

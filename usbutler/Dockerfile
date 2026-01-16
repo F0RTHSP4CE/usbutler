@@ -1,5 +1,5 @@
 # Single-stage build
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Set environment variables
 ENV UV_CACHE_DIR=/tmp/uv-cache
