@@ -189,25 +189,6 @@
           </div>
         </div>
 
-        <div class="card shadow-sm mt-4">
-          <div class="card-header">
-            <h6 class="mb-0">Last scan</h6>
-          </div>
-          <div class="card-body" id="last-scan-panel">
-            {% if last_scan %}
-            <p class="mb-1 text-muted">
-              {{ last_scan.identifier_type }}: <span class="text-monospace">{{ last_scan.masked_identifier }}</span>
-            </p>
-            {% if last_scan.existing_user_name %}
-            <p class="mb-0">Linked to <strong>{{ last_scan.existing_user_name }}</strong>.</p>
-            {% else %}
-            <p class="mb-0">Card not yet assigned.</p>
-            {% endif %}
-            {% else %}
-            <p class="mb-0 text-muted">No scans yet.</p>
-            {% endif %}
-          </div>
-        </div>
       </div>
     </div>
   </main>

@@ -12,10 +12,8 @@ from app.web.common import (
     _is_web_reader_enabled,
     AuthService,
     ReaderStateOut,
-    ScanSummary,
     UserOut,
     get_auth_service,
-    get_last_scan,
     get_reader_control,
 )
 
@@ -28,9 +26,8 @@ async def index(
     request: Request,
     auth_service: AuthService = Depends(get_auth_service),
     reader_control_dep: ReaderControl = Depends(get_reader_control),
-    last_scan: ScanSummary | None = Depends(get_last_scan),
 ) -> HTMLResponse:
-    users = list(auth_service.list_users().values())
+    users = auth_service.list_users()
     serialized = [UserOut.model_validate(user, from_attributes=True) for user in users]
     serialized.sort(key=lambda item: item.name.lower())
     owner = str(reader_control_dep.get_owner() or "door")
@@ -42,7 +39,6 @@ async def index(
         {
             "request": request,
             "users": serialized,
-            "last_scan": last_scan.model_dump() if last_scan else None,
             "reader_enabled": _is_web_reader_enabled(),
             "reader_state": reader_state.model_dump(),
         },

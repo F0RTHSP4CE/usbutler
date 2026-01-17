@@ -27,7 +27,6 @@ def _is_web_reader_enabled() -> bool:
 _auth_service = AuthService(_DEFAULT_DB_PATH)
 _emv_service = EMVCardService() if _is_web_reader_enabled() else None
 _scan_lock = threading.Lock()
-_last_scan: "ScanSummary | None" = None
 _reader_control = get_reader_control()
 
 
@@ -58,17 +57,6 @@ class UserOut(BaseModel):
 
 class ReaderStateOut(BaseModel):
     owner: str
-
-
-class ScanSummary(BaseModel):
-    identifier: str
-    masked_identifier: str
-    identifier_type: str | None
-    timestamp: float
-    already_registered: bool
-    existing_user_name: str | None = None
-    existing_user_id: str | None = None
-    metadata: Dict[str, Any] | None = None
 
 
 class ScanRequest(BaseModel):
@@ -132,7 +120,6 @@ class UserResponse(SuccessResponse):
 
 class UserListResponse(SuccessResponse):
     users: List[UserOut]
-    last_scan: ScanSummary | None = None
     reader_enabled: bool
     reader_state: ReaderStateOut
 
@@ -186,12 +173,3 @@ def get_scan_lock() -> threading.Lock:
 
 def get_reader_control() -> ReaderControl:
     return _reader_control
-
-
-def get_last_scan() -> ScanSummary | None:
-    return _last_scan
-
-
-def set_last_scan(scan: ScanSummary | None) -> None:
-    global _last_scan
-    _last_scan = scan

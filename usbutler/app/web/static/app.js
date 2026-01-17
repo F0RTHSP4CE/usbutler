@@ -8,7 +8,6 @@
   const existingUserAlert = document.querySelector("#existing-user-alert");
   const addUserForm = document.querySelector("#add-user-form");
   const usersTableBody = document.querySelector("#users-table-body");
-  const lastScanPanel = document.querySelector("#last-scan-panel");
   const readerControlCard = document.querySelector("#reader-control-card");
   const claimReaderBtn = document.querySelector("#claim-reader-btn");
   const releaseReaderBtn = document.querySelector("#release-reader-btn");
@@ -390,31 +389,6 @@
     body.innerHTML = (rows.join("\n") || '<div class="py-2 small text-muted">No additional data.</div>') + metadataSection;
   };
 
-  const updateLastScanPanel = (payload) => {
-    if (!lastScanPanel) return;
-    if (!payload) {
-      lastScanPanel.innerHTML = '<p class="mb-0 text-muted">No scans yet.</p>';
-      return;
-    }
-    const safeMasked = maskValue(payload.identifier);
-    const userLine = payload.existing_user_name
-      ? `Linked to <strong>${payload.existing_user_name}</strong>.`
-      : "Card not yet assigned.";
-    const issuer = payload.metadata?.issuer;
-    const expiry = formatExpiry(payload.metadata?.expiry);
-    const extraLines = [
-      issuer ? `<p class="mb-0 small text-muted">Issuer: ${issuer}</p>` : "",
-      expiry ? `<p class="mb-0 small text-muted">Expiry: ${expiry}</p>` : "",
-    ]
-      .filter(Boolean)
-      .join("");
-    lastScanPanel.innerHTML = `
-      <p class="mb-1 text-muted">${payload.identifier_type}: <span class="text-monospace">${safeMasked}</span></p>
-      <p class="mb-0">${userLine}</p>
-      ${extraLines}
-    `;
-  };
-
   const renderUsers = (users) => {
     cachedUsers = users;
     if (!usersTableBody) return;
@@ -561,7 +535,6 @@
     }
     renderUsers(data.users || []);
     populateExistingUsers();
-    updateLastScanPanel(data.last_scan);
   };
 
   const handlePauseUser = async (userId) => {
@@ -722,13 +695,6 @@
       identifierTypeLabel.textContent = `Identifier type: ${data.identifier_type || "—"}`;
       scanStatus.textContent = `Card captured (${data.identifier_type || "identifier"})`;
       updateCardMeta(data);
-      updateLastScanPanel({
-        identifier: data.identifier,
-        identifier_type: data.identifier_type || "Identifier",
-        existing_user_name: data.existing_user?.name || (data.already_registered ? "Unknown" : null),
-        metadata: data.metadata,
-      });
-
       if (data.already_registered) {
         if (existingUserAlert) {
           const name = data.existing_user?.name || "another user";

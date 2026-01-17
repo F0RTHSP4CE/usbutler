@@ -79,34 +79,32 @@ def parse_atr(atr_bytes: List[int]) -> Dict[str, object]:
     while True:
         if y_indicator & 0x01:
             if i < len(atr_bytes):
-                parsed["interface_chars"][f"TA{interface_char_index}"] = (
-                    f"{atr_bytes[i]:02X}"
-                )
+                parsed["interface_chars"][
+                    f"TA{interface_char_index}"
+                ] = f"{atr_bytes[i]:02X}"
                 i += 1
             else:
                 break
         if y_indicator & 0x02:
             if i < len(atr_bytes):
-                parsed["interface_chars"][f"TB{interface_char_index}"] = (
-                    f"{atr_bytes[i]:02X}"
-                )
+                parsed["interface_chars"][
+                    f"TB{interface_char_index}"
+                ] = f"{atr_bytes[i]:02X}"
                 i += 1
             else:
                 break
         if y_indicator & 0x04:
             if i < len(atr_bytes):
-                parsed["interface_chars"][f"TC{interface_char_index}"] = (
-                    f"{atr_bytes[i]:02X}"
-                )
+                parsed["interface_chars"][
+                    f"TC{interface_char_index}"
+                ] = f"{atr_bytes[i]:02X}"
                 i += 1
             else:
                 break
         if y_indicator & 0x08:
             if i < len(atr_bytes):
                 td = atr_bytes[i]
-                parsed["interface_chars"][f"TD{interface_char_index}"] = (
-                    f"{td:02X}"
-                )
+                parsed["interface_chars"][f"TD{interface_char_index}"] = f"{td:02X}"
                 y_indicator = td >> 4
                 protocol_t = td & 0x0F
                 interface_char_index += 1
@@ -124,9 +122,7 @@ def parse_atr(atr_bytes: List[int]) -> Dict[str, object]:
     if historical_end <= len(atr_bytes):
         historical = atr_bytes[historical_start:historical_end]
         parsed["historical_bytes_hex"] = toHexString(historical)
-        parsed["summary"].append(
-            f"Historical Bytes: {parsed['historical_bytes_hex']}"
-        )
+        parsed["summary"].append(f"Historical Bytes: {parsed['historical_bytes_hex']}")
         i = historical_end
 
     if protocol_t > 0 and i < len(atr_bytes):
@@ -299,7 +295,12 @@ def issuer_from_pan(pan: Optional[str]) -> Optional[str]:
     if pan.startswith("62"):
         return "UnionPay"
 
-    if pan.startswith("6011") or pan.startswith("65") or pan.startswith("64") or pan.startswith("622"):
+    if (
+        pan.startswith("6011")
+        or pan.startswith("65")
+        or pan.startswith("64")
+        or pan.startswith("622")
+    ):
         return "Discover/UnionPay (check BIN)"
 
     try:
@@ -393,9 +394,12 @@ class CardScanResult:
 class EMVCardService:
     """Service for reading NFC cards and extracting stable identifiers."""
 
-    def __init__(self, nfc_reader: Optional[NFCReader] = None, use_acr122_proprietary: bool = False):
+    def __init__(
+        self,
+        nfc_reader: Optional[NFCReader] = None,
+        use_acr122_proprietary: bool = False,
+    ):
         self.nfc_reader = nfc_reader or NFCReader()
-        self.last_scan: Optional[CardScanResult] = None
         # watchdog to detect stalls during EMV probing
         self._last_progress_time: Optional[float] = None
         self._progress_timeout = 4.0
@@ -421,23 +425,20 @@ class EMVCardService:
 
     def disconnect(self) -> None:
         self.nfc_reader.disconnect()
-        self.last_scan = None
 
     def read_card_pan(self) -> Optional[str]:
         try:
             scan_result = self.read_card_data()
-            self.last_scan = scan_result
             return scan_result.identifier()
         except Exception as exc:
             print(f"Error reading card identifier: {exc}")
             return None
 
-    def get_last_scan(self) -> Optional[CardScanResult]:
-        return self.last_scan
-
     def read_card_data(self) -> CardScanResult:
         if not self.nfc_reader.is_connected():
-            raise RuntimeError("No card connection available. Call wait_for_card first.")
+            raise RuntimeError(
+                "No card connection available. Call wait_for_card first."
+            )
 
         atr_bytes = self._get_atr_bytes()
         parsed_atr = parse_atr(atr_bytes) if atr_bytes else None
@@ -501,7 +502,11 @@ class EMVCardService:
                 result.tag_type = "HCE/Tokenized (via PPSE)"
                 result.tokenized = True
                 result.identifiers = derive_identifiers(
-                    result.pan, uid_hex, result.tokenized, result.tag_type, result.card_type
+                    result.pan,
+                    uid_hex,
+                    result.tokenized,
+                    result.tag_type,
+                    result.card_type,
                 )
                 return result
 
@@ -633,7 +638,9 @@ class EMVCardService:
             try:
                 reader_name = getattr(self.nfc_reader, "reader_name", "") or ""
                 if self._use_acr122_proprietary and "ACR122" in reader_name.upper():
-                    print("⚠️ Progress timeout: attempting ACR122 field reset (proprietary)")
+                    print(
+                        "⚠️ Progress timeout: attempting ACR122 field reset (proprietary)"
+                    )
                     # Best-effort: disconnect will drop RF field; proprietary escape could be added here
                 else:
                     print("⚠️ Progress timeout: disconnecting reader to reset state")
@@ -731,7 +738,9 @@ class EMVCardService:
         _, sw1, sw2 = self._transmit(apdu)
         return (sw1, sw2) == (0x90, 0x00), (sw1, sw2)
 
-    def _read_block(self, block_or_page: int, length: int = 0x10) -> Tuple[Optional[bytes], Tuple[int, int]]:
+    def _read_block(
+        self, block_or_page: int, length: int = 0x10
+    ) -> Tuple[Optional[bytes], Tuple[int, int]]:
         apdu = [0xFF, 0xB0, 0x00, block_or_page, length]
         response, sw1, sw2 = self._transmit(apdu)
         if (sw1, sw2) == (0x90, 0x00) and response:
@@ -739,7 +748,10 @@ class EMVCardService:
         return None, (sw1, sw2)
 
     def _detect_contactless_tag_type(
-        self, uid_hex: Optional[str], atr_hex_compact: str, card_type: Optional[str] = None
+        self,
+        uid_hex: Optional[str],
+        atr_hex_compact: str,
+        card_type: Optional[str] = None,
     ) -> Tuple[str, bool]:
         tokenized = False
 
@@ -774,10 +786,10 @@ class EMVCardService:
         if not is_iso14443_4:
             raw3, _ = self._read_block(3, length=0x10)
             if raw3:
-                if b"\xE1" in raw3 or b"\x03" in raw3:
+                if b"\xe1" in raw3 or b"\x03" in raw3:
                     p4, _ = self._read_block(4, length=0x10)
                     combined = raw3 + (p4 or b"")
-                    if b"\x03" in combined or b"\xE1" in combined:
+                    if b"\x03" in combined or b"\xe1" in combined:
                         return "NTAG/Ultralight (likely)", False
 
         if uid_hex:

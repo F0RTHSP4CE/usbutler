@@ -19,7 +19,6 @@ from app.web.common import (
     ScanErrorResponse,
     ScanRequest,
     ScanResponse,
-    ScanSummary,
     SuccessResponse,
     UserErrorResponse,
     UserListResponse,
@@ -31,10 +30,8 @@ from app.web.common import (
     _is_web_reader_enabled,
     get_auth_service,
     get_emv_service,
-    get_last_scan,
     get_reader_control,
     get_scan_lock,
-    set_last_scan,
     UserOut,
 )
 
@@ -77,15 +74,13 @@ def _handle_user_action(
 async def api_list_users(
     auth_service: AuthService = Depends(get_auth_service),
     reader_control_dep: ReaderControl = Depends(get_reader_control),
-    last_scan: ScanSummary | None = Depends(get_last_scan),
 ) -> UserListResponse:
-    users = list(auth_service.list_users().values())
+    users = auth_service.list_users()
     serialized = [UserOut.model_validate(user, from_attributes=True) for user in users]
     serialized.sort(key=lambda item: item.name.lower())
     owner = str(reader_control_dep.get_owner() or "door")
     return UserListResponse(
         users=serialized,
-        last_scan=last_scan,
         reader_enabled=_is_web_reader_enabled(),
         reader_state=ReaderStateOut(owner=owner),
     )
@@ -187,18 +182,6 @@ async def api_scan_card(
             ),
         )
 
-        set_last_scan(
-            ScanSummary(
-                identifier=identifier,
-                masked_identifier=masked_identifier,
-                identifier_type=response_model.identifier_type,
-                timestamp=response_model.timestamp,
-                already_registered=response_model.already_registered,
-                existing_user_name=existing_user.name if existing_user else None,
-                existing_user_id=existing_user.user_id if existing_user else None,
-                metadata=metadata,
-            )
-        )
         response.status_code = status.HTTP_200_OK
         return response_model
     except Exception as exc:  # pragma: no cover - defensive fallback

@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Any
+
+
+ALLOWED_ACCESS_LEVELS = {"user", "admin"}
 
 
 class AuthServiceError(Exception):
@@ -43,25 +47,15 @@ class MissingNameError(AuthServiceError):
         super().__init__("missing_name", message)
 
 
+@dataclass(slots=True)
 class Identifier:
     """Represents a stable identifier associated with a user."""
 
-    def __init__(
-        self,
-        value: str,
-        identifier_type: str = "PAN",
-        metadata: Optional[Dict[str, Any]] = None,
-    ):
-        self.value = value
-        self.type = identifier_type or "PAN"
-        self.metadata: Dict[str, Any] = metadata.copy() if metadata else {}
+    value: str
+    type: str = "PAN"
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def mask(self) -> str:
-        if len(self.value) <= 4:
-            return self.value
-        return f"****{self.value[-4:]}"
-
-    def to_dict(self) -> Dict[str, object]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "value": self.value,
             "type": self.type,
@@ -69,33 +63,26 @@ class Identifier:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, object]) -> "Identifier":
+    def from_dict(cls, data: dict[str, Any]) -> "Identifier":
         metadata = data.get("metadata")
         return cls(
             value=str(data.get("value", "")),
-            identifier_type=str(data.get("type", "PAN")),
-            metadata=metadata if isinstance(metadata, dict) else None,
+            type=str(data.get("type", "PAN") or "PAN"),
+            metadata=metadata if isinstance(metadata, dict) else {},
         )
 
 
+@dataclass(slots=True)
 class User:
     """User data model supporting multiple identifiers."""
 
-    def __init__(
-        self,
-        user_id: str,
-        name: str,
-        access_level: str = "user",
-        active: bool = True,
-        identifiers: Optional[List[Identifier]] = None,
-    ):
-        self.user_id = user_id
-        self.name = name
-        self.access_level = access_level
-        self.active = active
-        self.identifiers: List[Identifier] = identifiers[:] if identifiers else []
+    user_id: str
+    name: str
+    access_level: str = "user"
+    active: bool = True
+    identifiers: list[Identifier] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, object]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "access_level": self.access_level,
@@ -104,35 +91,29 @@ class User:
         }
 
     @classmethod
-    def from_dict(cls, user_id: str, data: Dict[str, object]) -> "User":
+    def from_dict(cls, user_id: str, data: dict[str, Any]) -> "User":
         identifiers_data = data.get("identifiers", [])
         if not isinstance(identifiers_data, list):
             identifiers_data = []
         identifiers = [Identifier.from_dict(item) for item in identifiers_data]
-        user = cls(
+        return cls(
             user_id=user_id,
             name=str(data.get("name", "Unknown")),
             access_level=str(data.get("access_level", "user")),
             active=bool(data.get("active", True)),
             identifiers=identifiers,
         )
-        return user
 
-    def add_identifier(self, identifier: Identifier) -> None:
+    def add_identifier(self, identifier: Identifier) -> bool:
         if any(item.value == identifier.value for item in self.identifiers):
-            return
+            return False
         self.identifiers.append(identifier)
+        return True
 
     def remove_identifier(self, value: str) -> bool:
-        removed = False
-        remaining: List[Identifier] = []
-        for identifier in self.identifiers:
-            if identifier.value == value:
-                removed = True
-                continue
-            remaining.append(identifier)
-        self.identifiers = remaining
-        return removed
+        original_len = len(self.identifiers)
+        self.identifiers = [item for item in self.identifiers if item.value != value]
+        return len(self.identifiers) != original_len
 
 
 class AuthService:
@@ -141,15 +122,10 @@ class AuthService:
     def __init__(self, db_file: str = "users.json"):
         self.db_file = db_file
         self.users, self.identifier_index = self._load_users()
-        self._db_mtime = None  # type: Optional[float]
-        self._update_db_mtime()
 
-    def authenticate_user(self, pan: str) -> Optional[User]:
-        """
-        Authenticate a user by their PAN
-        Returns User object if authentication successful, None otherwise
-        """
-        user_id = self.identifier_index.get(pan)
+    def authenticate_user(self, identifier_value: str) -> User | None:
+        """Authenticate a user by identifier value."""
+        user_id = self.identifier_index.get(identifier_value)
         if not user_id:
             return None
         user = self.users.get(user_id)
@@ -163,7 +139,7 @@ class AuthService:
         name: str,
         access_level: str = "user",
         identifier_type: str = "PAN",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> User:
         if identifier_value in self.identifier_index:
             existing_user = self.users.get(
@@ -172,15 +148,15 @@ class AuthService:
             raise IdentifierExistsError(existing_user)
         if not name:
             raise MissingNameError("missing_name")
-        if access_level not in {"user", "admin"}:
+        if access_level not in ALLOWED_ACCESS_LEVELS:
             raise InvalidAccessLevelError("invalid_access_level")
         user_id = str(uuid.uuid4())
         user = User(user_id=user_id, name=name, access_level=access_level, active=True)
         user.add_identifier(
             Identifier(
                 identifier_value,
-                identifier_type,
-                metadata=metadata,
+                identifier_type or "PAN",
+                metadata=metadata or {},
             )
         )
         self.identifier_index[identifier_value] = user_id
@@ -193,7 +169,7 @@ class AuthService:
         user_id: str,
         identifier_value: str,
         identifier_type: str = "UID",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> User:
         if identifier_value in self.identifier_index:
             existing_user = self.users.get(
@@ -206,8 +182,8 @@ class AuthService:
         user.add_identifier(
             Identifier(
                 identifier_value,
-                identifier_type,
-                metadata=metadata,
+                identifier_type or "UID",
+                metadata=metadata or {},
             )
         )
         self.identifier_index[identifier_value] = user_id
@@ -248,26 +224,9 @@ class AuthService:
         self._save_users()
         return user
 
-    def list_users(self) -> Dict[str, User]:
-        """List all users in the system"""
-        return self.users.copy()
-
-    def refresh_from_disk(self, force: bool = False) -> bool:
-        """Reload the user database if the backing file has changed.
-
-        Returns True when a reload occurred.
-        """
-
-        current_mtime = self._get_db_mtime()
-        if not force and current_mtime == self._db_mtime:
-            return False
-
-        self.users, self.identifier_index = self._load_users()
-        self._update_db_mtime()
-        return True
-
-    def get_user(self, user_id: str) -> Optional[User]:
-        return self.users.get(user_id)
+    def list_users(self) -> list[User]:
+        """List all users in the system."""
+        return list(self.users.values())
 
     def find_user_by_identifier_or_raise(self, identifier_value: str) -> User:
         user = self.users.get(self.identifier_index.get(identifier_value, ""))
@@ -275,21 +234,23 @@ class AuthService:
             raise UserNotFoundError("not_found")
         return user
 
-    def _load_users(self) -> tuple[Dict[str, User], Dict[str, str]]:
-        """Load users from JSON file"""
+    def _load_users(self) -> tuple[dict[str, User], dict[str, str]]:
+        """Load users from JSON file."""
         try:
-            with open(self.db_file, "r") as f:
+            with open(self.db_file, "r", encoding="utf-8") as f:
                 raw_data = json.load(f)
-        except FileNotFoundError:
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
             return {}, {}
 
         if not raw_data:
             return {}, {}
 
         if isinstance(raw_data, dict) and "users" in raw_data:
-            users: Dict[str, User] = {}
-            index: Dict[str, str] = {}
+            users: dict[str, User] = {}
+            index: dict[str, str] = {}
             for user_id, payload in raw_data.get("users", {}).items():
+                if not isinstance(payload, dict):
+                    continue
                 user = User.from_dict(user_id, payload)
                 if not user.identifiers:
                     continue
@@ -301,25 +262,11 @@ class AuthService:
         # Fallback to empty structure if the file contents are not recognised
         return {}, {}
 
-    def _save_users(self):
-        """Save current users to JSON file"""
-        self._save_users_dict(self.users)
-
-    def _save_users_dict(self, users: Dict[str, User]):
+    def _save_users(self) -> None:
         payload = {
-            "users": {user_id: user.to_dict() for user_id, user in users.items()},
+            "users": {user_id: user.to_dict() for user_id, user in self.users.items()},
         }
         with open(self.db_file, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
-        self._update_db_mtime()
-
-    def _get_db_mtime(self) -> Optional[float]:
-        try:
-            return os.path.getmtime(self.db_file)
-        except OSError:
-            return None
-
-    def _update_db_mtime(self) -> None:
-        self._db_mtime = self._get_db_mtime()
