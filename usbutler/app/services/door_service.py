@@ -80,18 +80,14 @@ class LedSettings:
 @dataclass(frozen=True)
 class TelegramSettings:
     chat_id: Optional[str]
-    base_url: Optional[str]
+    bot_token: Optional[str]
     thread_id: Optional[str]
     request_timeout: float
     message_template: str
 
     @classmethod
     def from_env(cls) -> "TelegramSettings":
-        base_url = os.getenv("USBUTLER_TG_BASE_URL")
-        if not base_url:
-            token = os.getenv("USBUTLER_TG_BOT_TOKEN")
-            if token:
-                base_url = f"https://api.telegram.org/bot{token}/sendMessage"
+        bot_token = os.getenv("USBUTLER_TG_BOT_TOKEN")
 
         try:
             request_timeout = float(os.getenv("USBUTLER_TG_REQUEST_TIMEOUT", "5"))
@@ -100,7 +96,7 @@ class TelegramSettings:
 
         return cls(
             chat_id=os.getenv("USBUTLER_TG_CHAT_ID"),
-            base_url=base_url,
+            bot_token=bot_token,
             thread_id=os.getenv("USBUTLER_TG_THREAD_ID"),
             request_timeout=request_timeout,
             message_template=os.getenv(
@@ -291,7 +287,7 @@ class DoorControlService:
 
     def _send_telegram_log(self, event: DoorEvent) -> None:
         settings = self._settings.telegram
-        if not settings.chat_id or not settings.base_url:
+        if not settings.chat_id or not settings.bot_token:
             return
 
         timestamp = datetime.datetime.fromtimestamp(
@@ -321,8 +317,10 @@ class DoorControlService:
         if settings.thread_id:
             payload["message_thread_id"] = settings.thread_id
 
+        base_url = f"https://api.telegram.org/bot{settings.bot_token}/sendMessage"
+
         requests.post(
-            settings.base_url,
+            base_url,
             data=payload,
             timeout=settings.request_timeout,
         )

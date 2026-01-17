@@ -20,7 +20,9 @@ door access control system.
 
 ```
 cp .env.example .env
+cp .env.secrets.example .env.secrets
 nano .env
+nano .env.secrets
 
 docker compose up --build -d
 ```
@@ -47,7 +49,7 @@ With these values configured the service will toggle the relay when a user is au
 
 ### Unlock notifications (LED wall + Telegram)
 
-The door daemon can emit a welcome message to an LED wall and log unlock events to a Telegram thread every time the door opens. Configure the targets via environment variables (for example inside `.env`):
+The door daemon can emit a welcome message to an LED wall and log unlock events to a Telegram thread every time the door opens. Configure the targets via environment variables (for example inside `.env` for non-secrets and `.env.secrets` for secrets: token/chat/thread only):
 
 | Variable | Required | Description |
 | --- | --- | --- |
@@ -57,14 +59,13 @@ The door daemon can emit a welcome message to an LED wall and log unlock events 
 | `USBUTLER_LED_POSITION_X` / `USBUTLER_LED_POSITION_Y` | | Coordinates for the rendered text (defaults: `10`, `5`). |
 | `USBUTLER_LED_MESSAGE_TEMPLATE` | | Python format template for the welcome text (default: `Welcome {name}!`). |
 | `USBUTLER_LED_REQUEST_TIMEOUT` | | HTTP timeout in seconds (default: `5`). |
-| `USBUTLER_TG_BASE_URL` | | Full Telegram sendMessage URL (e.g. `https://api.telegram.org/bot<token>/sendMessage`). Omit if you prefer to supply `USBUTLER_TG_BOT_TOKEN`. |
-| `USBUTLER_TG_BOT_TOKEN` | ◻️ | Bot token used when `USBUTLER_TG_BASE_URL` is not provided. |
+| `USBUTLER_TG_BOT_TOKEN` | ◻️ | Bot token used for Telegram notifications. |
 | `USBUTLER_TG_CHAT_ID` | ✅ | Destination chat or channel ID (negative for channels). |
 | `USBUTLER_TG_THREAD_ID` | | Optional thread/topic ID for forum-style chats. |
 | `USBUTLER_TG_MESSAGE_TEMPLATE` | | Python format template for the log message (default: `Door unlocked at {time} by {name} [{identifier_type}: {identifier}]`). |
 | `USBUTLER_TG_REQUEST_TIMEOUT` | | HTTP timeout in seconds (default: `5`). |
 
-The Telegram log automatically censors the card identifier (PAN/UID) to its last four characters. To reproduce the shell script snippet you can set:
+The Telegram log automatically censors the card identifier (PAN/UID) to its last four characters. To reproduce the shell script snippet you can set (split between `.env` and `.env.secrets`):
 
 ```
 USBUTLER_LED_ENDPOINT=http://ledka.lo.f0rth.space/text
@@ -72,7 +73,7 @@ USBUTLER_LED_FONT=BMplain
 USBUTLER_LED_TIMEOUT=500
 USBUTLER_LED_POSITION_X=10
 USBUTLER_LED_POSITION_Y=5
-USBUTLER_TG_BASE_URL=https://api.telegram.org/bot<token>/sendMessage
+USBUTLER_TG_BOT_TOKEN=<token>
 USBUTLER_TG_CHAT_ID=-1002070662990
 USBUTLER_TG_THREAD_ID=3
 ```

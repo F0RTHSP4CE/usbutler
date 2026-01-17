@@ -11,22 +11,9 @@ services:
       - ./config:/app/config:ro
       - /run/udev:/run/udev:ro
       - usbutler-data:/app/data
-    environment:
-      - LOG_LEVEL=INFO
-      - USBUTLER_USERS_DB=/app/data/users.json
-      - USBUTLER_WEB_ENABLE_READER=1
-      - USBUTLER_DOOR_GPIO=8
-      - USBUTLER_DOOR_ACTIVE_HIGH=0
-      - USBUTLER_GPIO_CHIP=/dev/gpiochip0
-      - "USBUTLER_LED_ENDPOINT=http://ledka.lo.f0rth.space/text"
-      - "USBUTLER_LED_FONT=BMplain"
-      - "USBUTLER_LED_TIMEOUT=500"
-      - "USBUTLER_LED_POSITION_X=10"
-      - "USBUTLER_LED_POSITION_Y=5"
-      # - "USBUTLER_TG_BASE_URL=https://api.telegram.org/bot6806760620:AAFn7L68xamSCV-P0yqe4b0N2gPovW8EyTg/sendMessage"
-      # - "USBUTLER_TG_CHAT_ID=-1002070662990"
-      - "USBUTLER_TG_THREAD_ID=3"
-      - "USBUTLER_DOOR_REOPEN_DELAY=5"
+    env_file:
+      - .env
+      - .env.secrets
     ports:
       - "8000:8000"
 
