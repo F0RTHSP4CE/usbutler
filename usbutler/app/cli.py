@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 
-from app.services.reader_control import get_reader_control
+from app.services.reader_control import ReaderControl, get_reader_control
 from app.services.door_service import DoorControlService
 from app.services.emv_service import EMVCardService
 from app.services.auth_service import AuthService
+
+logger = logging.getLogger(__name__)
 
 
 class SmartDoorLockController:
@@ -24,10 +27,6 @@ class SmartDoorLockController:
         self._pause_condition = threading.Condition()
 
     def run_authentication_cycle(self) -> bool:
-        owner = self.reader_control.get_owner()
-        if owner != "door":
-            return False
-
         if self.reader_control.get_owner() != "door":
             return False
 
@@ -55,15 +54,13 @@ class SmartDoorLockController:
         self.running = True
         while self.running:
             try:
-                if self.reader_control.get_owner() != "door":
-                    self._cooperative_pause(1)
-                    continue
                 self.run_authentication_cycle()
             except KeyboardInterrupt:
-                self.running = False
                 break
             except Exception:
+                logger.exception("Error in authentication cycle")
                 self._cooperative_pause(2)
+        self.running = False
 
     def stop(self) -> None:
         self.running = False
