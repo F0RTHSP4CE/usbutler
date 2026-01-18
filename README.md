@@ -106,3 +106,24 @@ The UI uses Bootstrap 5 and offers card scanning, user enrollment, pause/resume 
 ## REST API
 
 Automate management through HTTP requests. The Flask service exposes endpoints for creating, deleting, pausing, resuming, and looking up users by card identifier. See [documentation/API.md](documentation/API.md) for detailed request/response examples.
+
+### Authentication
+
+Both the API and web UI can be secured with a single password. Set the `API_PASSWORD` environment variable:
+
+```bash
+API_PASSWORD=your-secret-password
+```
+
+**API access:** Include the `X-API-Key` header in requests:
+
+```bash
+curl -H "X-API-Key: your-secret-password" http://localhost:8000/api/users
+```
+
+**Web UI access:** When `API_PASSWORD` is set:
+- Accessing any UI page (`/`, `/doors`) redirects to `/login`
+- After login, the password is stored in a cookie and automatically included in API requests
+- Use the `[Logout]` link to end the session (cookie valid for 1 week)
+
+If `API_PASSWORD` is not set (empty or missing), authentication is disabled for both API and UI.
