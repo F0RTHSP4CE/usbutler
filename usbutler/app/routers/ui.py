@@ -1,15 +1,15 @@
 """UI router for web interface."""
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.routers import identifiers as identifiers_router_module
-from app.services.door_service import DoorService
-from app.services.identifier_service import IdentifierService
-from app.services.user_service import UserService
+from app.dependencies import (
+    CardReaderPollingDep,
+    DoorServiceDep,
+    IdentifierServiceDep,
+    UserServiceDep,
+)
 
 router = APIRouter(tags=["ui"])
 
@@ -17,19 +17,20 @@ templates = Jinja2Templates(directory="app/templates")
 
 
 @router.get("/", response_class=HTMLResponse)
-async def index(request: Request, db: Session = Depends(get_db)):
+async def index(
+    request: Request,
+    user_service: UserServiceDep,
+    identifier_service: IdentifierServiceDep,
+    card_reader_polling: CardReaderPollingDep,
+):
     """Main page - users and card scanning."""
-    user_service = UserService(db)
-    identifier_service = IdentifierService(db)
-
     users = user_service.get_all()
 
-    # Get last scan info - access the module variable dynamically
+    # Get last scan info
     last_scan = None
     last_scan_identifier = None
-    polling = identifiers_router_module._card_reader_polling
-    if polling:
-        last_scan = polling.get_last_scan()
+    if card_reader_polling:
+        last_scan = card_reader_polling.get_last_scan()
         if last_scan:
             last_scan_identifier = identifier_service.get_by_value(last_scan["value"])
 
@@ -45,9 +46,11 @@ async def index(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/doors", response_class=HTMLResponse)
-async def doors_page(request: Request, db: Session = Depends(get_db)):
+async def doors_page(
+    request: Request,
+    door_service: DoorServiceDep,
+):
     """Doors management page."""
-    door_service = DoorService(db)
     doors = door_service.get_all()
 
     return templates.TemplateResponse(

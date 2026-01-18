@@ -2,10 +2,13 @@
 
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, status
 
-from app.database import get_db
+from app.dependencies import (
+    CardReaderPollingDep,
+    IdentifierServiceDep,
+    UserServiceDep,
+)
 from app.schemas.identifier import (
     IdentifierCreate,
     IdentifierResponse,
@@ -13,43 +16,29 @@ from app.schemas.identifier import (
     IdentifierWithUser,
     LastScanResponse,
 )
-from app.services.identifier_service import IdentifierService
-from app.services.user_service import UserService
 
 router = APIRouter(prefix="/identifiers", tags=["identifiers"])
-
-# Reference to the card reader polling service (will be set by main.py)
-_card_reader_polling = None
-
-
-def set_card_reader_polling(polling_service):
-    """Set the card reader polling service reference."""
-    global _card_reader_polling
-    _card_reader_polling = polling_service
 
 
 @router.get("", response_model=List[IdentifierWithUser])
 def list_identifiers(
+    identifier_service: IdentifierServiceDep,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
 ):
     """List all identifiers."""
-    service = IdentifierService(db)
-    return service.get_all(skip=skip, limit=limit)
+    return identifier_service.get_all(skip=skip, limit=limit)
 
 
 @router.post("", response_model=IdentifierResponse, status_code=status.HTTP_201_CREATED)
 def create_identifier(
     identifier_data: IdentifierCreate,
-    db: Session = Depends(get_db),
+    identifier_service: IdentifierServiceDep,
+    user_service: UserServiceDep,
 ):
     """Create a new identifier."""
-    service = IdentifierService(db)
-    user_service = UserService(db)
-
     # Check if value already exists
-    existing = service.get_by_value(identifier_data.value)
+    existing = identifier_service.get_by_value(identifier_data.value)
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -65,26 +54,28 @@ def create_identifier(
                 detail=f"User with id {identifier_data.user_id} not found",
             )
 
-    return service.create(identifier_data)
+    return identifier_service.create(identifier_data)
 
 
 @router.get("/last-scan", response_model=LastScanResponse)
-def get_last_scan(db: Session = Depends(get_db)):
+def get_last_scan(
+    identifier_service: IdentifierServiceDep,
+    card_reader_polling: CardReaderPollingDep,
+):
     """
     Get the last scanned card/identifier.
 
     This is useful for quickly assigning a recently scanned card to a user.
     """
-    if _card_reader_polling is None:
+    if card_reader_polling is None:
         return LastScanResponse()
 
-    last_scan = _card_reader_polling.get_last_scan()
+    last_scan = card_reader_polling.get_last_scan()
     if not last_scan:
         return LastScanResponse()
 
     # Check if identifier exists and has a user
-    service = IdentifierService(db)
-    identifier = service.get_by_value(last_scan["value"])
+    identifier = identifier_service.get_by_value(last_scan["value"])
 
     user_id = None
     username = None
@@ -104,11 +95,10 @@ def get_last_scan(db: Session = Depends(get_db)):
 @router.get("/{identifier_id}", response_model=IdentifierWithUser)
 def get_identifier(
     identifier_id: int,
-    db: Session = Depends(get_db),
+    identifier_service: IdentifierServiceDep,
 ):
     """Get an identifier by ID."""
-    service = IdentifierService(db)
-    identifier = service.get_by_id(identifier_id)
+    identifier = identifier_service.get_by_id(identifier_id)
 
     if not identifier:
         raise HTTPException(
@@ -122,11 +112,10 @@ def get_identifier(
 @router.get("/by-value/{value}", response_model=IdentifierWithUser)
 def get_identifier_by_value(
     value: str,
-    db: Session = Depends(get_db),
+    identifier_service: IdentifierServiceDep,
 ):
     """Get an identifier by value."""
-    service = IdentifierService(db)
-    identifier = service.get_by_value(value)
+    identifier = identifier_service.get_by_value(value)
 
     if not identifier:
         raise HTTPException(
@@ -141,15 +130,13 @@ def get_identifier_by_value(
 def update_identifier(
     identifier_id: int,
     identifier_data: IdentifierUpdate,
-    db: Session = Depends(get_db),
+    identifier_service: IdentifierServiceDep,
+    user_service: UserServiceDep,
 ):
     """Update an identifier."""
-    service = IdentifierService(db)
-    user_service = UserService(db)
-
     # Check if value is being changed to an existing one
     if identifier_data.value:
-        existing = service.get_by_value(identifier_data.value)
+        existing = identifier_service.get_by_value(identifier_data.value)
         if existing and existing.id != identifier_id:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -165,7 +152,7 @@ def update_identifier(
                 detail=f"User with id {identifier_data.user_id} not found",
             )
 
-    identifier = service.update(identifier_id, identifier_data)
+    identifier = identifier_service.update(identifier_id, identifier_data)
 
     if not identifier:
         raise HTTPException(
@@ -179,12 +166,10 @@ def update_identifier(
 @router.delete("/{identifier_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_identifier(
     identifier_id: int,
-    db: Session = Depends(get_db),
+    identifier_service: IdentifierServiceDep,
 ):
     """Delete an identifier."""
-    service = IdentifierService(db)
-
-    if not service.delete(identifier_id):
+    if not identifier_service.delete(identifier_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Identifier with id {identifier_id} not found",
@@ -195,12 +180,10 @@ def delete_identifier(
 def assign_identifier_to_user(
     identifier_id: int,
     user_id: int,
-    db: Session = Depends(get_db),
+    identifier_service: IdentifierServiceDep,
+    user_service: UserServiceDep,
 ):
     """Assign an identifier to a user."""
-    service = IdentifierService(db)
-    user_service = UserService(db)
-
     # Validate user exists
     user = user_service.get_by_id(user_id)
     if not user:
@@ -209,7 +192,7 @@ def assign_identifier_to_user(
             detail=f"User with id {user_id} not found",
         )
 
-    identifier = service.assign_to_user(identifier_id, user_id)
+    identifier = identifier_service.assign_to_user(identifier_id, user_id)
 
     if not identifier:
         raise HTTPException(
@@ -223,12 +206,10 @@ def assign_identifier_to_user(
 @router.post("/{identifier_id}/unassign", response_model=IdentifierWithUser)
 def unassign_identifier(
     identifier_id: int,
-    db: Session = Depends(get_db),
+    identifier_service: IdentifierServiceDep,
 ):
     """Unassign an identifier from its user."""
-    service = IdentifierService(db)
-
-    identifier = service.assign_to_user(identifier_id, None)
+    identifier = identifier_service.assign_to_user(identifier_id, None)
 
     if not identifier:
         raise HTTPException(

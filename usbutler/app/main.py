@@ -7,8 +7,8 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.database import init_db
+from app.dependencies import set_card_reader_polling
 from app.routers import doors_router, identifiers_router, users_router, ui_router
-from app.routers.identifiers import set_card_reader_polling
 from app.services.card_reader_polling import CardReaderPollingService
 
 # Configure logging
