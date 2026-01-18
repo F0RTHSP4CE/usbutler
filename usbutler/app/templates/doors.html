@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Doors - USButler{% endblock %}
+
+{% block content %}
+<div class="section">
+    <h2>Add Door</h2>
+    <div class="form-row">
+        <input type="text" id="doorName" placeholder="name">
+        <input type="number" id="doorPin" placeholder="GPIO pin" style="width:80px">
+        <select id="doorActiveLow">
+            <option value="false">active high</option>
+            <option value="true">active low</option>
+        </select>
+        <input type="number" id="doorHoldTime" placeholder="hold(s)" value="3" step="0.5" style="width:70px">
+        <button onclick="createDoor()">Add</button>
+    </div>
+</div>
+
+<div class="section">
+    <h2>Doors</h2>
+    <table>
+        <tr>
+            <th>Name</th>
+            <th>GPIO</th>
+            <th>Hold</th>
+            <th>Actions</th>
+        </tr>
+        {% for door in doors %}
+        <tr>
+            <td>{{ door.name }}</td>
+            <td>{{ door.gpio_pin }}{% if door.gpio_active_low %} (low){% endif %}</td>
+            <td>{{ door.open_hold_time }}s</td>
+            <td>
+                <button onclick="openDoor({{ door.id }})">[OPEN]</button>
+                <button onclick="deleteDoor({{ door.id }})">[delete]</button>
+            </td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="4">No doors</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    async function createDoor() {
+        const name = document.getElementById('doorName').value.trim();
+        const gpio_pin = parseInt(document.getElementById('doorPin').value);
+        const gpio_active_low = document.getElementById('doorActiveLow').value === 'true';
+        const open_hold_time = parseFloat(document.getElementById('doorHoldTime').value) || 3;
+        if (!name || isNaN(gpio_pin)) { showAlert('Fill name and pin', 'danger'); return; }
+        try {
+            await api('POST', '/doors', { name, gpio_pin, gpio_active_low, open_hold_time });
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function openDoor(id) {
+        try {
+            await api('POST', `/doors/${id}/open`, {});
+            showAlert('Opening door...');
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function deleteDoor(id) {
+        if (!confirm('Delete door?')) return;
+        try {
+            await api('DELETE', `/doors/${id}`);
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Users - USButler{% endblock %}
+
+{% block content %}
+<div class="section">
+    <h2>Last Scanned Card</h2>
+    {% if last_scan %}
+    <p>
+        <strong>{{ last_scan.type.value }}</strong>: <code>{{ last_scan.value }}</code>
+        ({{ last_scan.scanned_at.strftime('%H:%M:%S') }})
+        {% if last_scan_identifier and last_scan_identifier.user %}
+        — assigned to <strong>{{ last_scan_identifier.user.username }}</strong>
+        {% elif last_scan_identifier %}
+        — registered, unassigned
+        {% else %}
+        — not registered
+        {% endif %}
+    </p>
+    {% if not last_scan_identifier %}
+    <div class="form-row">
+        <select id="assignUserId">
+            <option value="">-- select user --</option>
+            {% for user in users %}
+            <option value="{{ user.id }}">{{ user.username }}</option>
+            {% endfor %}
+        </select>
+        <button onclick="assignLastScan()">Assign</button>
+        | or |
+        <input type="text" id="newUsername" placeholder="new username">
+        <button onclick="createAndAssign()">Create & Assign</button>
+    </div>
+    {% elif not last_scan_identifier.user %}
+    <div class="form-row">
+        <select id="assignUserId">
+            <option value="">-- select user --</option>
+            {% for user in users %}
+            <option value="{{ user.id }}">{{ user.username }}</option>
+            {% endfor %}
+        </select>
+        <button onclick="assignExisting({{ last_scan_identifier.id }})">Assign</button>
+    </div>
+    {% endif %}
+    {% else %}
+    <p>No card scanned yet.</p>
+    {% endif %}
+</div>
+
+<div class="section">
+    <h2>Users</h2>
+    <div class="form-row">
+        <input type="text" id="newUserInput" placeholder="username">
+        <button onclick="createUser()">Add User</button>
+    </div>
+    <br>
+    <table>
+        <tr>
+            <th>Username</th>
+            <th>Status</th>
+            <th>Identifiers</th>
+            <th></th>
+        </tr>
+        {% for user in users %}
+        <tr>
+            <td>{{ user.username }}</td>
+            <td>
+                <select onchange="updateStatus({{ user.id }}, this.value)">
+                    <option value="active" {% if user.status.value=='active' %}selected{% endif %}>active</option>
+                    <option value="inactive" {% if user.status.value=='inactive' %}selected{% endif %}>inactive</option>
+                    <option value="suspended" {% if user.status.value=='suspended' %}selected{% endif %}>suspended
+                    </option>
+                </select>
+            </td>
+            <td>
+                {% for ident in user.identifiers %}
+                {{ ident.type.value }}:{{ ident.value[:12] }}{% if ident.value|length > 12 %}...{% endif %}
+                <button onclick="deleteIdentifier({{ ident.id }})">[x]</button>
+                {% else %}
+                -
+                {% endfor %}
+            </td>
+            <td><button onclick="deleteUser({{ user.id }})">[delete]</button></td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="4">No users</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    async function createUser() {
+        const username = document.getElementById('newUserInput').value.trim();
+        if (!username) return;
+        try {
+            await api('POST', '/users', { username, status: 'active' });
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function updateStatus(userId, status) {
+        try {
+            await api('PATCH', `/users/${userId}`, { status });
+            showAlert('Updated');
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function deleteUser(userId) {
+        if (!confirm('Delete user?')) return;
+        try {
+            await api('DELETE', `/users/${userId}`);
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function deleteIdentifier(id) {
+        if (!confirm('Delete identifier?')) return;
+        try {
+            await api('DELETE', `/identifiers/${id}`);
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function assignLastScan() {
+        const userId = document.getElementById('assignUserId').value;
+        if (!userId) { showAlert('Select user', 'danger'); return; }
+        const value = '{{ last_scan.value if last_scan else "" }}';
+        const type = '{{ last_scan.type.value if last_scan else "" }}';
+        try {
+            await api('POST', '/identifiers', { value, type, user_id: parseInt(userId) });
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function createAndAssign() {
+        const username = document.getElementById('newUsername').value.trim();
+        if (!username) { showAlert('Enter username', 'danger'); return; }
+        const value = '{{ last_scan.value if last_scan else "" }}';
+        const type = '{{ last_scan.type.value if last_scan else "" }}';
+        try {
+            const user = await api('POST', '/users', { username, status: 'active' });
+            await api('POST', '/identifiers', { value, type, user_id: user.id });
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function assignExisting(identId) {
+        const userId = document.getElementById('assignUserId').value;
+        if (!userId) { showAlert('Select user', 'danger'); return; }
+        try {
+            await api('POST', `/identifiers/${identId}/assign/${userId}`);
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    setInterval(async () => {
+        try {
+            const scan = await api('GET', '/identifiers/last-scan');
+            if (scan.value && scan.value !== '{{ last_scan.value if last_scan else "" }}') {
+                location.reload();
+            }
+        } catch (e) { }
+    }, 3000);
+</script>
+{% endblock %}

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}USButler{% endblock %}</title>
+    <style>
+        body {
+            font-family: monospace;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+
+        nav {
+            margin-bottom: 1rem;
+        }
+
+        nav a {
+            margin-right: 1rem;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        th,
+        td {
+            border: 1px solid #000;
+            padding: 0.3rem 0.5rem;
+            text-align: left;
+        }
+
+        input,
+        select,
+        button {
+            font-family: monospace;
+        }
+
+        .section {
+            margin: 1.5rem 0;
+            padding: 1rem;
+            border: 1px solid #000;
+        }
+
+        .form-row {
+            margin: 0.5rem 0;
+        }
+
+        .alert {
+            padding: 0.5rem;
+            margin: 0.5rem 0;
+            border: 1px solid #000;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>USButler</h1>
+    <nav>
+        <a href="/">[Users]</a>
+        <a href="/doors">[Doors]</a>
+    </nav>
+    <hr>
+    <div id="alerts"></div>
+    {% block content %}{% endblock %}
+    <script>
+        const API = '/api';
+        async function api(method, endpoint, data = null) {
+            const opts = { method, headers: { 'Content-Type': 'application/json' } };
+            if (data) opts.body = JSON.stringify(data);
+            const res = await fetch(API + endpoint, opts);
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || 'Request failed');
+            }
+            return res.status === 204 ? null : res.json();
+        }
+        function showAlert(msg, type = 'info') {
+            const div = document.createElement('div');
+            div.className = 'alert';
+            div.textContent = (type === 'danger' ? '❌ ' : '✓ ') + msg;
+            document.getElementById('alerts').appendChild(div);
+            setTimeout(() => div.remove(), 3000);
+        }
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+
+</html>
