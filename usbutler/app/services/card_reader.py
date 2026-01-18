@@ -391,7 +391,7 @@ class CardScanResult:
         return None
 
 
-class EMVCardService:
+class CardReaderService:
     """Service for reading NFC cards and extracting stable identifiers."""
 
     def __init__(
