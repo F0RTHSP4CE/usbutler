@@ -1,5 +1,6 @@
 """Dependency injection providers for FastAPI."""
 
+from dataclasses import dataclass
 from typing import Annotated, Optional
 
 from fastapi import Depends
@@ -15,34 +16,19 @@ from app.services.user_service import UserService
 DbSession = Annotated[Session, Depends(get_db)]
 
 
-def get_user_service(db: DbSession) -> UserService:
-    """Dependency provider for UserService."""
-    return UserService(db)
+@dataclass
+class Services:
+    """Container for all injected services."""
+
+    db: Session
+    users: UserService
+    doors: DoorService
+    identifiers: IdentifierService
+    door_control: DoorControlService
+    card_reader_polling: Optional[object] = None
 
 
-def get_door_service(db: DbSession) -> DoorService:
-    """Dependency provider for DoorService."""
-    return DoorService(db)
-
-
-def get_identifier_service(db: DbSession) -> IdentifierService:
-    """Dependency provider for IdentifierService."""
-    return IdentifierService(db)
-
-
-def get_door_control_service() -> DoorControlService:
-    """Dependency provider for DoorControlService."""
-    return DoorControlService()
-
-
-# Type aliases for injected services
-UserServiceDep = Annotated[UserService, Depends(get_user_service)]
-DoorServiceDep = Annotated[DoorService, Depends(get_door_service)]
-IdentifierServiceDep = Annotated[IdentifierService, Depends(get_identifier_service)]
-DoorControlServiceDep = Annotated[DoorControlService, Depends(get_door_control_service)]
-
-
-# Card reader polling service - simple module-level reference
+# Module-level reference for card reader polling (set at startup)
 _card_reader_polling = None
 
 
@@ -52,9 +38,16 @@ def set_card_reader_polling(service) -> None:
     _card_reader_polling = service
 
 
-def get_card_reader_polling():
-    """Dependency provider for card reader polling service."""
-    return _card_reader_polling
+def get_services(db: DbSession) -> Services:
+    """Dependency provider for all services."""
+    return Services(
+        db=db,
+        users=UserService(db),
+        doors=DoorService(db),
+        identifiers=IdentifierService(db),
+        door_control=DoorControlService(),
+        card_reader_polling=_card_reader_polling,
+    )
 
 
-CardReaderPollingDep = Annotated[Optional[object], Depends(get_card_reader_polling)]
+ServicesDep = Annotated[Services, Depends(get_services)]

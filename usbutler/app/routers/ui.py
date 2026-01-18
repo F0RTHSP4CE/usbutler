@@ -4,12 +4,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from app.dependencies import (
-    CardReaderPollingDep,
-    DoorServiceDep,
-    IdentifierServiceDep,
-    UserServiceDep,
-)
+from app.dependencies import ServicesDep
 
 router = APIRouter(tags=["ui"])
 
@@ -17,22 +12,16 @@ templates = Jinja2Templates(directory="app/templates")
 
 
 @router.get("/", response_class=HTMLResponse)
-async def index(
-    request: Request,
-    user_service: UserServiceDep,
-    identifier_service: IdentifierServiceDep,
-    card_reader_polling: CardReaderPollingDep,
-):
+async def index(request: Request, s: ServicesDep):
     """Main page - users and card scanning."""
-    users = user_service.get_all()
+    users = s.users.get_all()
 
-    # Get last scan info
     last_scan = None
     last_scan_identifier = None
-    if card_reader_polling:
-        last_scan = card_reader_polling.get_last_scan()
+    if s.card_reader_polling:
+        last_scan = s.card_reader_polling.get_last_scan()
         if last_scan:
-            last_scan_identifier = identifier_service.get_by_value(last_scan["value"])
+            last_scan_identifier = s.identifiers.get_by_value(last_scan["value"])
 
     return templates.TemplateResponse(
         "index.html",
@@ -46,17 +35,12 @@ async def index(
 
 
 @router.get("/doors", response_class=HTMLResponse)
-async def doors_page(
-    request: Request,
-    door_service: DoorServiceDep,
-):
+async def doors_page(request: Request, s: ServicesDep):
     """Doors management page."""
-    doors = door_service.get_all()
-
     return templates.TemplateResponse(
         "doors.html",
         {
             "request": request,
-            "doors": doors,
+            "doors": s.doors.get_all(),
         },
     )
