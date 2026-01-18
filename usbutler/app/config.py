@@ -27,5 +27,8 @@ class Settings:
     )
     DEFAULT_DOOR_ID: int = int(os.getenv("DEFAULT_DOOR_ID", "1"))
 
+    # API Authentication (used for both API and UI)
+    API_PASSWORD: str = os.getenv("API_PASSWORD", "")
+
 
 settings = Settings()

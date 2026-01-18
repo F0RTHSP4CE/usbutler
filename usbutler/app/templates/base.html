@@ -62,14 +62,24 @@
     <nav>
         <a href="/">[Users]</a>
         <a href="/doors">[Doors]</a>
+        {% if auth_enabled %}
+        <a href="/logout" style="float: right;">[Logout]</a>
+        {% endif %}
     </nav>
     <hr>
     <div id="alerts"></div>
     {% block content %}{% endblock %}
     <script>
         const API = '/api';
+        function getApiKey() {
+            const match = document.cookie.match(/(?:^|; )api_key=([^;]*)/);
+            return match ? decodeURIComponent(match[1]) : null;
+        }
         async function api(method, endpoint, data = null) {
-            const opts = { method, headers: { 'Content-Type': 'application/json' } };
+            const headers = { 'Content-Type': 'application/json' };
+            const apiKey = getApiKey();
+            if (apiKey) headers['X-API-Key'] = apiKey;
+            const opts = { method, headers };
             if (data) opts.body = JSON.stringify(data);
             const res = await fetch(API + endpoint, opts);
             if (!res.ok) {

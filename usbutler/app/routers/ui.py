@@ -1,19 +1,99 @@
 """UI router for web interface."""
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+import secrets
+from typing import Optional
+
+from fastapi import APIRouter, Cookie, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.dependencies import ServicesDep
+from app.config import settings
+from app.dependencies import ServicesDepNoAuth
 
 router = APIRouter(tags=["ui"])
 
 templates = Jinja2Templates(directory="app/templates")
 
 
+def _is_authenticated(api_key: Optional[str]) -> bool:
+    """Check if the API key cookie is valid."""
+    if not settings.API_PASSWORD:
+        # No password configured, allow all
+        return True
+    if not api_key:
+        return False
+    return secrets.compare_digest(api_key, settings.API_PASSWORD)
+
+
+def _require_auth(api_key: Optional[str]):
+    """Check authentication and return redirect if not authenticated."""
+    if not _is_authenticated(api_key):
+        return RedirectResponse(url="/login", status_code=302)
+    return None
+
+
+@router.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, api_key: Optional[str] = Cookie(None)):
+    """Login page."""
+    # If already authenticated, redirect to home
+    if _is_authenticated(api_key):
+        return RedirectResponse(url="/", status_code=302)
+
+    # If no password is set, redirect to home
+    if not settings.API_PASSWORD:
+        return RedirectResponse(url="/", status_code=302)
+
+    return templates.TemplateResponse(
+        "login.html",
+        {"request": request, "error": None},
+    )
+
+
+@router.post("/login", response_class=HTMLResponse)
+async def login_submit(
+    request: Request,
+    password: str = Form(...),
+):
+    """Handle login form submission."""
+    if not settings.API_PASSWORD:
+        return RedirectResponse(url="/", status_code=302)
+
+    if secrets.compare_digest(password, settings.API_PASSWORD):
+        # Store the API password in a cookie for browser to use in API calls
+        response = RedirectResponse(url="/", status_code=302)
+        response.set_cookie(
+            key="api_key",
+            value=password,
+            httponly=False,  # JavaScript needs access to send in API requests
+            samesite="lax",
+            max_age=60 * 60 * 24 * 7,  # 1 week
+        )
+        return response
+
+    return templates.TemplateResponse(
+        "login.html",
+        {"request": request, "error": "Invalid password"},
+    )
+
+
+@router.get("/logout")
+async def logout():
+    """Log out and clear session."""
+    response = RedirectResponse(url="/login", status_code=302)
+    response.delete_cookie("api_key")
+    return response
+
+
 @router.get("/", response_class=HTMLResponse)
-async def index(request: Request, s: ServicesDep):
+async def index(
+    request: Request,
+    s: ServicesDepNoAuth,
+    api_key: Optional[str] = Cookie(None),
+):
     """Main page - users and card scanning."""
+    if redirect := _require_auth(api_key):
+        return redirect
+
     users = s.users.get_all()
 
     last_scan = None
@@ -30,17 +110,26 @@ async def index(request: Request, s: ServicesDep):
             "users": users,
             "last_scan": last_scan,
             "last_scan_identifier": last_scan_identifier,
+            "auth_enabled": bool(settings.API_PASSWORD),
         },
     )
 
 
 @router.get("/doors", response_class=HTMLResponse)
-async def doors_page(request: Request, s: ServicesDep):
+async def doors_page(
+    request: Request,
+    s: ServicesDepNoAuth,
+    api_key: Optional[str] = Cookie(None),
+):
     """Doors management page."""
+    if redirect := _require_auth(api_key):
+        return redirect
+
     return templates.TemplateResponse(
         "doors.html",
         {
             "request": request,
             "doors": s.doors.get_all(),
+            "auth_enabled": bool(settings.API_PASSWORD),
         },
     )

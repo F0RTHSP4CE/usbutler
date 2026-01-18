@@ -12,6 +12,7 @@ dependencies = [
     "gpiod>=2.0.0",
     "requests>=2.32.0",
     "sqlalchemy>=2.0.45",
+    "python-multipart>=0.0.21",
 ]
 
 [dependency-groups]
