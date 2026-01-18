@@ -174,8 +174,8 @@
         throw new Error("Failed to fetch reader state");
       }
       const data = await response.json();
-      if (data.success && data.state) {
-        updateReaderControlUI(data.state);
+      if (data.success && data.data) {
+        updateReaderControlUI(data.data);
       }
     } catch (error) {
       console.error(error);
@@ -201,8 +201,8 @@
       const data = await response.json();
       if (response.ok && data.success) {
         success = true;
-        if (data.state) {
-          updateReaderControlUI(data.state);
+        if (data.data) {
+          updateReaderControlUI(data.data);
         } else {
           await refreshReaderState();
         }
@@ -530,16 +530,15 @@
     if (!data.success) {
       return;
     }
-    if (data.reader_state) {
-      updateReaderControlUI(data.reader_state);
-    }
-    renderUsers(data.users || []);
+    renderUsers(data.data || []);
     populateExistingUsers();
   };
 
   const handlePauseUser = async (userId) => {
-    const response = await fetch(`/api/users/${encodeURIComponent(userId)}/pause`, {
-      method: "POST",
+    const response = await fetch(`/api/users/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active: false }),
     });
     if (response.ok) {
       await refreshUsers();
@@ -547,8 +546,10 @@
   };
 
   const handleResumeUser = async (userId) => {
-    const response = await fetch(`/api/users/${encodeURIComponent(userId)}/resume`, {
-      method: "POST",
+    const response = await fetch(`/api/users/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active: true }),
     });
     if (response.ok) {
       await refreshUsers();
@@ -674,7 +675,7 @@
     scanStatus.textContent = "Waiting for card…";
     updateCardMeta(null);
     try {
-      const response = await fetch("/api/scan-card", {
+      const response = await fetch("/api/reader/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ timeout: 15 }),
@@ -686,15 +687,16 @@
         return;
       }
 
-      latestScan = data;
-      identifierInput.value = data.identifier;
+      const scanData = data.data || {};
+      latestScan = { ...scanData, already_registered: data.already_registered, existing_user: data.existing_user };
+      identifierInput.value = scanData.identifier;
       identifierToggleBtn.disabled = false;
       inputMasked = true;
       identifierInput.type = "password";
       identifierToggleBtn.textContent = "Show";
-      identifierTypeLabel.textContent = `Identifier type: ${data.identifier_type || "—"}`;
-      scanStatus.textContent = `Card captured (${data.identifier_type || "identifier"})`;
-      updateCardMeta(data);
+      identifierTypeLabel.textContent = `Identifier type: ${scanData.identifier_type || "—"}`;
+      scanStatus.textContent = `Card captured (${scanData.identifier_type || "identifier"})`;
+      updateCardMeta(scanData);
       if (data.already_registered) {
         if (existingUserAlert) {
           const name = data.existing_user?.name || "another user";
@@ -734,42 +736,58 @@
 
     const mode = getAssignMode();
     const defaultLabel = mode === "new" ? "Create user" : "Add card";
-    const payload = {
-      identifier: identifierInput.value,
-      identifier_type: latestScan?.identifier_type || "UID",
-    };
-
-    if (mode === "new") {
-      const nameField = document.querySelector("#name");
-      payload.name = nameField?.value?.trim();
-      payload.access_level = document.querySelector("#access_level")?.value || "user";
-      if (!payload.name) {
-        scanStatus.textContent = "Name is required.";
-        return;
-      }
-    } else {
-      const userId = existingUserSelect?.value;
-      if (!userId) {
-        scanStatus.textContent = "Select a user to attach this card.";
-        return;
-      }
-      payload.user_id = userId;
-    }
-
     const metadataPayload = buildMetadataPayload(latestScan);
-    if (metadataPayload) {
-      payload.metadata = metadataPayload;
-    }
 
     submitBtn.disabled = true;
     submitBtn.textContent = "Saving…";
 
     try {
-      const response = await fetch("/api/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      let response;
+      if (mode === "new") {
+        const nameField = document.querySelector("#name");
+        const name = nameField?.value?.trim();
+        if (!name) {
+          scanStatus.textContent = "Name is required.";
+          submitBtn.disabled = false;
+          submitBtn.textContent = defaultLabel;
+          return;
+        }
+        const payload = {
+          name,
+          identifier: identifierInput.value,
+          identifier_type: latestScan?.identifier_type || "UID",
+          access_level: document.querySelector("#access_level")?.value || "user",
+        };
+        if (metadataPayload) {
+          payload.metadata = metadataPayload;
+        }
+        response = await fetch("/api/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        const userId = existingUserSelect?.value;
+        if (!userId) {
+          scanStatus.textContent = "Select a user to attach this card.";
+          submitBtn.disabled = false;
+          submitBtn.textContent = defaultLabel;
+          return;
+        }
+        const payload = {
+          value: identifierInput.value,
+          type: latestScan?.identifier_type || "UID",
+        };
+        if (metadataPayload) {
+          payload.metadata = metadataPayload;
+        }
+        response = await fetch(`/api/users/${encodeURIComponent(userId)}/identifiers`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+
       const data = await response.json();
       if (response.ok && data.success) {
         addUserForm.reset();
@@ -778,7 +796,7 @@
         scanStatus.textContent = mode === "new" ? "User created and card assigned." : "Card added to user.";
         await refreshUsers();
       } else {
-        const message = data?.error || "Failed to save.";
+        const message = data?.message || data?.error || "Failed to save.";
         scanStatus.textContent = message;
       }
     } catch (error) {

@@ -31,15 +31,17 @@ async def index(
     serialized = [UserOut.model_validate(user, from_attributes=True) for user in users]
     serialized.sort(key=lambda item: item.name.lower())
     owner = str(reader_control_dep.get_owner() or "door")
+    reader_enabled = _is_web_reader_enabled()
     reader_state = ReaderStateOut(
         owner=owner,
+        enabled=reader_enabled,
     )
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "users": serialized,
-            "reader_enabled": _is_web_reader_enabled(),
+            "reader_enabled": reader_enabled,
             "reader_state": reader_state.model_dump(),
         },
     )

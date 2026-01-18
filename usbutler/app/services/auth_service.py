@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from dataclasses import dataclass, field
 from typing import Any
+
+from pydantic import BaseModel, Field
 
 
 ALLOWED_ACCESS_LEVELS = {"user", "admin"}
@@ -15,94 +16,59 @@ ALLOWED_ACCESS_LEVELS = {"user", "admin"}
 class AuthServiceError(Exception):
     """Base error for authentication service operations."""
 
-    def __init__(self, code: str, message: str | None = None):
-        self.code = code
-        self.message = message
-        super().__init__(message or code)
+    code: str = "error"
+    default_message: str = "An error occurred"
+
+    def __init__(self, message: str | None = None, **kwargs):
+        self.code = self.__class__.code
+        self.message = message or self.default_message
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+        super().__init__(self.message)
 
 
 class UserNotFoundError(AuthServiceError):
-    def __init__(self, message: str | None = None):
-        super().__init__("not_found", message)
+    code = "not_found"
+    default_message = "User not found"
 
 
 class IdentifierNotFoundError(AuthServiceError):
-    def __init__(self, message: str | None = None):
-        super().__init__("not_found", message)
+    code = "not_found"
+    default_message = "Identifier not found"
 
 
 class IdentifierExistsError(AuthServiceError):
-    def __init__(self, existing_user: "User | None" = None, message: str | None = None):
-        super().__init__("user_exists", message)
-        self.existing_user = existing_user
+    code = "user_exists"
+    default_message = "Identifier already exists"
+    existing_user: "User | None" = None
 
 
 class InvalidAccessLevelError(AuthServiceError):
-    def __init__(self, message: str | None = None):
-        super().__init__("invalid_access_level", message)
+    code = "invalid_access_level"
+    default_message = "Invalid access level"
 
 
 class MissingNameError(AuthServiceError):
-    def __init__(self, message: str | None = None):
-        super().__init__("missing_name", message)
+    code = "missing_name"
+    default_message = "Name is required"
 
 
-@dataclass(slots=True)
-class Identifier:
+class Identifier(BaseModel):
     """Represents a stable identifier associated with a user."""
 
     value: str
     type: str = "PAN"
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "value": self.value,
-            "type": self.type,
-            "metadata": self.metadata,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Identifier":
-        metadata = data.get("metadata")
-        return cls(
-            value=str(data.get("value", "")),
-            type=str(data.get("type", "PAN") or "PAN"),
-            metadata=metadata if isinstance(metadata, dict) else {},
-        )
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass(slots=True)
-class User:
+class User(BaseModel):
     """User data model supporting multiple identifiers."""
 
     user_id: str
     name: str
     access_level: str = "user"
     active: bool = True
-    identifiers: list[Identifier] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "access_level": self.access_level,
-            "active": self.active,
-            "identifiers": [identifier.to_dict() for identifier in self.identifiers],
-        }
-
-    @classmethod
-    def from_dict(cls, user_id: str, data: dict[str, Any]) -> "User":
-        identifiers_data = data.get("identifiers", [])
-        if not isinstance(identifiers_data, list):
-            identifiers_data = []
-        identifiers = [Identifier.from_dict(item) for item in identifiers_data]
-        return cls(
-            user_id=user_id,
-            name=str(data.get("name", "Unknown")),
-            access_level=str(data.get("access_level", "user")),
-            active=bool(data.get("active", True)),
-            identifiers=identifiers,
-        )
+    identifiers: list[Identifier] = Field(default_factory=list)
 
     def add_identifier(self, identifier: Identifier) -> bool:
         if any(item.value == identifier.value for item in self.identifiers):
@@ -132,6 +98,41 @@ class AuthService:
         if user and user.active:
             return user
         return None
+
+    def get_user_or_raise(self, user_id: str) -> User:
+        """Get a user by ID or raise UserNotFoundError."""
+        user = self.users.get(user_id)
+        if not user:
+            raise UserNotFoundError("User not found")
+        return user
+
+    def update_user_or_raise(
+        self,
+        user_id: str,
+        name: str | None = None,
+        access_level: str | None = None,
+        active: bool | None = None,
+    ) -> User:
+        """Update user details. Only provided fields are updated."""
+        user = self.users.get(user_id)
+        if not user:
+            raise UserNotFoundError("User not found")
+
+        if name is not None:
+            if not name.strip():
+                raise MissingNameError("Name cannot be empty")
+            user.name = name.strip()
+
+        if access_level is not None:
+            if access_level not in ALLOWED_ACCESS_LEVELS:
+                raise InvalidAccessLevelError(f"Invalid access level: {access_level}")
+            user.access_level = access_level
+
+        if active is not None:
+            user.active = active
+
+        self._save_users()
+        return user
 
     def create_user_or_raise(
         self,
@@ -251,7 +252,7 @@ class AuthService:
             for user_id, payload in raw_data.get("users", {}).items():
                 if not isinstance(payload, dict):
                     continue
-                user = User.from_dict(user_id, payload)
+                user = User(user_id=user_id, **payload)
                 if not user.identifiers:
                     continue
                 users[user_id] = user
@@ -259,12 +260,14 @@ class AuthService:
                     index[identifier.value] = user_id
             return users, index
 
-        # Fallback to empty structure if the file contents are not recognised
         return {}, {}
 
     def _save_users(self) -> None:
         payload = {
-            "users": {user_id: user.to_dict() for user_id, user in self.users.items()},
+            "users": {
+                user_id: user.model_dump(exclude={"user_id"})
+                for user_id, user in self.users.items()
+            },
         }
         with open(self.db_file, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
