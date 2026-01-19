@@ -48,7 +48,9 @@ class NFCReader:
 
             if not reader_list:
                 if self._last_reader_snapshot != ():
-                    print("No card readers found. Make sure the USB card reader is connected.")
+                    print(
+                        "No card readers found. Make sure the USB card reader is connected."
+                    )
                 self._last_reader_snapshot = ()
                 return False
 
@@ -197,7 +199,9 @@ class NFCReader:
                 if not self._attempt_reconnect():
                     print("Failed to reconnect after APDU error: no readers available")
                     if attempt == max_retries:
-                        raise Exception("APDU transmission failed: connection unavailable")
+                        raise Exception(
+                            "APDU transmission failed: connection unavailable"
+                        )
                     self._timed_pause(0.1)
                     continue
 
@@ -206,7 +210,9 @@ class NFCReader:
 
                 if connection is None:
                     if attempt == max_retries:
-                        raise Exception("APDU transmission failed: connection unavailable")
+                        raise Exception(
+                            "APDU transmission failed: connection unavailable"
+                        )
                     self._timed_pause(0.1)
                     continue
 
@@ -318,7 +324,9 @@ class NFCReader:
 
                 # If card says INS not supported (6D00), try with empty PDOL as fallback
                 if sw1 == 0x6D and sw2 == 0x00 and pdol_data:
-                    print("Card returned 6D00 for GPO with PDOL - trying empty PDOL fallback")
+                    print(
+                        "Card returned 6D00 for GPO with PDOL - trying empty PDOL fallback"
+                    )
                     try:
                         empty_apdu = [0x80, 0xA8, 0x00, 0x00, 0x02, 0x83, 0x00, 0x00]
                         response2, sw1b, sw2b = self.send_apdu(empty_apdu)
