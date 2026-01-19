@@ -8,8 +8,12 @@ from fastapi import FastAPI
 from app.config import settings
 from app.database import init_db
 from app.dependencies import set_card_reader_polling
+from app.emv.nfc_reader import NFCReader
 from app.routers import doors_router, identifiers_router, users_router, ui_router
+from app.services.card_reader import CardReaderService
 from app.services.card_reader_polling import CardReaderPollingService
+from app.services.door_control_service import DoorControlService
+from app.services.notification_service import NotificationService
 
 # Configure logging
 logging.basicConfig(
@@ -18,7 +22,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Card reader polling service instance
+# Singletons
+nfc_reader = NFCReader()
+card_reader_service = CardReaderService(nfc_reader)
+notification_service = NotificationService()
+door_control_service = DoorControlService(notification_service)
 card_reader_polling: CardReaderPollingService | None = None
 
 
@@ -34,8 +42,10 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialized")
 
-    # Start card reader polling in a separate thread
+    # Start card reader polling
     card_reader_polling = CardReaderPollingService(
+        card_reader_service=card_reader_service,
+        door_control_service=door_control_service,
         poll_interval=settings.CARD_READER_POLL_INTERVAL,
         default_door_id=settings.DEFAULT_DOOR_ID,
     )

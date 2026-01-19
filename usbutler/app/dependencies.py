@@ -13,6 +13,7 @@ from app.database import get_db
 from app.services.door_control_service import DoorControlService
 from app.services.door_service import DoorService
 from app.services.identifier_service import IdentifierService
+from app.services.notification_service import NotificationService
 from app.services.user_service import UserService
 
 # API Key authentication
@@ -52,6 +53,18 @@ ApiKeyAuth = Annotated[bool, Depends(verify_api_key)]
 DbSession = Annotated[Session, Depends(get_db)]
 
 
+# Singletons (stateless services)
+_notification_service = NotificationService()
+_door_control_service = DoorControlService(_notification_service)
+_card_reader_polling = None
+
+
+def set_card_reader_polling(service) -> None:
+    """Set the card reader polling service (called at startup)."""
+    global _card_reader_polling
+    _card_reader_polling = service
+
+
 @dataclass
 class Services:
     """Container for all injected services."""
@@ -64,16 +77,6 @@ class Services:
     card_reader_polling: Optional[object] = None
 
 
-# Module-level reference for card reader polling (set at startup)
-_card_reader_polling = None
-
-
-def set_card_reader_polling(service) -> None:
-    """Set the card reader polling service (called at startup)."""
-    global _card_reader_polling
-    _card_reader_polling = service
-
-
 def _create_services(db: Session) -> Services:
     """Create a Services instance with all dependencies."""
     return Services(
@@ -81,7 +84,7 @@ def _create_services(db: Session) -> Services:
         users=UserService(db),
         doors=DoorService(db),
         identifiers=IdentifierService(db),
-        door_control=DoorControlService(),
+        door_control=_door_control_service,
         card_reader_polling=_card_reader_polling,
     )
 

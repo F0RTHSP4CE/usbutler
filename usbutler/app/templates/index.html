@@ -66,8 +66,6 @@
                 <select onchange="updateStatus({{ user.id }}, this.value)">
                     <option value="active" {% if user.status.value=='active' %}selected{% endif %}>active</option>
                     <option value="inactive" {% if user.status.value=='inactive' %}selected{% endif %}>inactive</option>
-                    <option value="suspended" {% if user.status.value=='suspended' %}selected{% endif %}>suspended
-                    </option>
                 </select>
             </td>
             <td>

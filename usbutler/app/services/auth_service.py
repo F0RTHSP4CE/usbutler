@@ -2,8 +2,6 @@
 
 from typing import Optional, Tuple
 
-from sqlalchemy.orm import Session
-
 from app.models.identifier import Identifier
 from app.models.user import User, UserStatus
 from app.services.identifier_service import IdentifierService
@@ -13,10 +11,13 @@ from app.services.user_service import UserService
 class AuthService:
     """Service for authenticating users by identifier."""
 
-    def __init__(self, db: Session):
-        self.db = db
-        self.user_service = UserService(db)
-        self.identifier_service = IdentifierService(db)
+    def __init__(
+        self,
+        user_service: UserService,
+        identifier_service: IdentifierService,
+    ):
+        self.user_service = user_service
+        self.identifier_service = identifier_service
 
     def authenticate_by_identifier(
         self, identifier_value: str

@@ -18,8 +18,8 @@ _door_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="door_cont
 class DoorControlService:
     """Service for controlling physical doors via GPIO."""
 
-    def __init__(self, notification_service: Optional[NotificationService] = None):
-        self.notification_service = notification_service or NotificationService()
+    def __init__(self, notification_service: NotificationService):
+        self.notification_service = notification_service
         self._gpio_available = self._check_gpio_available()
 
     def _check_gpio_available(self) -> bool:

@@ -7,14 +7,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Optional
 
-from app.config import settings
+from sqlalchemy.orm import Session
+
 from app.database import SessionLocal
+from app.emv.nfc_reader import NFCReader
 from app.models.identifier import IdentifierType
 from app.services.auth_service import AuthService
 from app.services.card_reader import CardReaderService, CardScanResult
 from app.services.door_control_service import DoorControlService
 from app.services.door_service import DoorService
-from app.emv.nfc_reader import NFCReader
+from app.services.identifier_service import IdentifierService
+from app.services.user_service import UserService
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +45,17 @@ class CardReaderPollingService:
 
     def __init__(
         self,
-        poll_interval: float = 1,
+        card_reader_service: CardReaderService,
+        door_control_service: DoorControlService,
+        poll_interval: float = 1.0,
         default_door_id: int = 1,
         on_scan_callback: Optional[Callable[[CardScanResult], None]] = None,
     ):
+        self._card_reader_service = card_reader_service
+        self._door_control_service = door_control_service
         self.poll_interval = poll_interval
         self.default_door_id = default_door_id
         self.on_scan_callback = on_scan_callback
-
-        self._nfc_reader = NFCReader()
-        self._card_reader_service = CardReaderService(self._nfc_reader)
-        self._door_control_service = DoorControlService()
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -181,15 +184,16 @@ class CardReaderPollingService:
 
     def _process_authentication(self, identifier_value: str) -> None:
         """Process authentication for a scanned identifier."""
-        # Create a new database session for this operation
+        # DB session per operation (thread safety)
         db = SessionLocal()
         try:
-            auth_service = AuthService(db)
-            door_service = DoorService(db)
+            users = UserService(db)
+            identifiers = IdentifierService(db)
+            doors = DoorService(db)
+            auth = AuthService(users, identifiers)
 
-            # Authenticate
-            success, user, identifier, message = (
-                auth_service.authenticate_by_identifier(identifier_value)
+            success, user, _, message = auth.authenticate_by_identifier(
+                identifier_value
             )
 
             if not success or user is None:
@@ -198,14 +202,11 @@ class CardReaderPollingService:
 
             logger.info(f"Authentication successful for user '{user.username}'")
 
-            # Get the door to open
-            door = door_service.get_by_id(self.default_door_id)
+            door = doors.get_by_id(self.default_door_id)
             if not door:
                 logger.error(f"Default door {self.default_door_id} not found")
                 return
 
-            # Open the door (this is non-blocking)
             self._door_control_service.open_door(door, user.username)
-
         finally:
             db.close()
