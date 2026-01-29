@@ -9,199 +9,47 @@ import requests
 from app.config import settings
 
 logger = logging.getLogger(__name__)
-
-# Dedicated thread pool for notification HTTP calls to avoid blocking
-_notification_executor = ThreadPoolExecutor(
-    max_workers=2,
-    thread_name_prefix="notification_",
-)
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="notify_")
 
 
 class NotificationService:
-    """Service for sending notifications to various endpoints.
+    """Service for sending Telegram notifications."""
 
-    All notification methods are non-blocking and run in a dedicated thread pool
-    to avoid blocking the caller (whether it's an async FastAPI handler or a
-    background thread).
-    """
+    def __init__(self):
+        self.bot_token = settings.TELEGRAM_BOT_TOKEN
+        self.chat_id = settings.TELEGRAM_CHAT_ID
 
-    def __init__(
-        self,
-        internal_webhook_url: Optional[str] = None,
-        telegram_bot_token: Optional[str] = None,
-        telegram_chat_id: Optional[str] = None,
-    ):
-        self.internal_webhook_url = (
-            internal_webhook_url or settings.INTERNAL_WEBHOOK_URL
-        )
-        self.telegram_bot_token = telegram_bot_token or settings.TELEGRAM_BOT_TOKEN
-        self.telegram_chat_id = telegram_chat_id or settings.TELEGRAM_CHAT_ID
-
-    def _send_internal_notification_sync(
-        self,
-        door_name: str,
-        username: Optional[str] = None,
-        success: bool = True,
-    ) -> bool:
-        """Send notification to internal HTTP endpoint (blocking)."""
-        if not self.internal_webhook_url:
-            logger.debug("Internal webhook URL not configured, skipping notification")
+    def _send_telegram(self, message: str) -> bool:
+        if not self.bot_token or not self.chat_id:
             return False
-
         try:
-            if success:
-                if username:
-                    message = f"🚪 Door '{door_name}' opened for user '{username}'"
-                else:
-                    message = f"🚪 Door '{door_name}' opened"
-            else:
-                message = f"❌ Failed to open door '{door_name}'"
-
-            payload = {
-                "door_name": door_name,
-                "username": username,
-                "success": success,
-                "message": message,
-            }
-
+            url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             response = requests.post(
-                self.internal_webhook_url,
-                json=payload,
-                timeout=5,
+                url,
+                json={
+                    "chat_id": self.chat_id,
+                    "text": message,
+                    "parse_mode": "Markdown",
+                },
+                timeout=10,
             )
             response.raise_for_status()
-            logger.info(f"Internal notification sent: {message}")
             return True
-
-        except requests.RequestException as e:
-            logger.error(f"Failed to send internal notification: {e}")
+        except Exception as e:
+            logger.error(f"Telegram notification failed: {e}")
             return False
 
-    def _send_telegram_notification_sync(
-        self,
-        door_name: str,
-        username: Optional[str] = None,
-        success: bool = True,
-    ) -> bool:
-        """Send notification to Telegram channel via bot API (blocking)."""
-        if not self.telegram_bot_token or not self.telegram_chat_id:
-            logger.debug("Telegram not configured, skipping notification")
-            return False
-
-        try:
-            if success:
-                if username:
-                    message = f"🚪 Door *{door_name}* opened for user *{username}*"
-                else:
-                    message = f"🚪 Door *{door_name}* opened"
-            else:
-                message = f"❌ Failed to open door *{door_name}*"
-
-            url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
-            payload = {
-                "chat_id": self.telegram_chat_id,
-                "text": message,
-                "parse_mode": "Markdown",
-            }
-
-            response = requests.post(url, json=payload, timeout=10)
-            response.raise_for_status()
-            logger.info(f"Telegram notification sent: {message}")
-            return True
-
-        except requests.RequestException as e:
-            logger.error(f"Failed to send Telegram notification: {e}")
-            return False
-
-    def notify_door_opened(
-        self,
-        door_name: str,
-        username: Optional[str] = None,
-        success: bool = True,
+    def notify_door_opened_async(
+        self, door_name: str, username: Optional[str] = None, success: bool = True
     ) -> None:
-        """Send notifications to all configured channels (non-blocking)."""
-        _notification_executor.submit(
-            self._send_internal_notification_sync, door_name, username, success
-        )
-        _notification_executor.submit(
-            self._send_telegram_notification_sync, door_name, username, success
-        )
-
-    def notify_button_pressed(
-        self,
-        door_name: str,
-        gpio_pin: int,
-    ) -> None:
-        """Send notification when external button is pressed (non-blocking)."""
-        _notification_executor.submit(
-            self._send_button_internal_notification_sync, door_name, gpio_pin
-        )
-        _notification_executor.submit(
-            self._send_button_telegram_notification_sync, door_name, gpio_pin
-        )
-
-    def _send_button_internal_notification_sync(
-        self,
-        door_name: str,
-        gpio_pin: int,
-    ) -> bool:
-        """Send button press notification to internal HTTP endpoint (blocking)."""
-        if not self.internal_webhook_url:
-            logger.debug("Internal webhook URL not configured, skipping notification")
-            return False
-
-        try:
-            message = (
-                f"🔘 External button pressed for door '{door_name}' (GPIO {gpio_pin})"
+        if success:
+            msg = f"🚪 Door *{door_name}* opened" + (
+                f" for *{username}*" if username else ""
             )
+        else:
+            msg = f"❌ Failed to open door *{door_name}*"
+        _executor.submit(self._send_telegram, msg)
 
-            payload = {
-                "door_name": door_name,
-                "gpio_pin": gpio_pin,
-                "event": "button_pressed",
-                "message": message,
-            }
-
-            response = requests.post(
-                self.internal_webhook_url,
-                json=payload,
-                timeout=5,
-            )
-            response.raise_for_status()
-            logger.info(f"Internal notification sent: {message}")
-            return True
-
-        except requests.RequestException as e:
-            logger.error(f"Failed to send internal notification: {e}")
-            return False
-
-    def _send_button_telegram_notification_sync(
-        self,
-        door_name: str,
-        gpio_pin: int,
-    ) -> bool:
-        """Send button press notification to Telegram (blocking)."""
-        if not self.telegram_bot_token or not self.telegram_chat_id:
-            logger.debug("Telegram not configured, skipping notification")
-            return False
-
-        try:
-            message = (
-                f"🔘 External button pressed for door *{door_name}* (GPIO {gpio_pin})"
-            )
-
-            url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
-            payload = {
-                "chat_id": self.telegram_chat_id,
-                "text": message,
-                "parse_mode": "Markdown",
-            }
-
-            response = requests.post(url, json=payload, timeout=10)
-            response.raise_for_status()
-            logger.info(f"Telegram notification sent: {message}")
-            return True
-
-        except requests.RequestException as e:
-            logger.error(f"Failed to send Telegram notification: {e}")
-            return False
+    def notify_button_pressed_async(self, door_name: str, gpio_pin: int) -> None:
+        msg = f"🔘 Button pressed for door *{door_name}* (GPIO {gpio_pin})"
+        _executor.submit(self._send_telegram, msg)

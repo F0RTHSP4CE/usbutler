@@ -1,9 +1,9 @@
-"""Dependency injection providers for FastAPI."""
+"""Dependency injection for FastAPI."""
 
 import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Annotated, Generator, Optional, TYPE_CHECKING
+from typing import Annotated, Generator, Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyHeader
@@ -12,43 +12,16 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import SessionLocal
 
-
-if TYPE_CHECKING:
-    from app.services.card_reader_polling import CardReaderPollingService
-    from app.services.door_control_service import DoorControlService
-    from app.services.door_event_service import DoorEventService
-    from app.services.door_service import DoorService
-    from app.services.identifier_service import IdentifierService
-    from app.services.notification_service import NotificationService
-    from app.services.user_service import UserService
-
-
-# API Key authentication
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 def verify_api_key(api_key: Annotated[str | None, Depends(api_key_header)]) -> bool:
-    """Verify the API key from the X-API-Key header.
-
-    If API_PASSWORD is not set, authentication is disabled.
-    """
     if not settings.API_PASSWORD:
         return True
-
-    if not api_key:
+    if not api_key or not secrets.compare_digest(api_key, settings.API_PASSWORD):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing API key",
-            headers={"WWW-Authenticate": "ApiKey"},
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key"
         )
-
-    if not secrets.compare_digest(api_key, settings.API_PASSWORD):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-            headers={"WWW-Authenticate": "ApiKey"},
-        )
-
     return True
 
 
@@ -56,7 +29,6 @@ ApiKeyAuth = Annotated[bool, Depends(verify_api_key)]
 
 
 def get_db() -> Generator[Session, None, None]:
-    """Dependency that provides a database session."""
     db = SessionLocal()
     try:
         yield db
@@ -69,7 +41,7 @@ DbSession = Annotated[Session, Depends(get_db)]
 
 @dataclass
 class Services:
-    """Container for all injected services."""
+    """Container for all services."""
 
     db: Session
     users: "UserService"
@@ -80,60 +52,45 @@ class Services:
     card_reader_polling: Optional["CardReaderPollingService"] = None
 
 
+# Singleton registry for hardware services
 class ServiceRegistry:
-    """
-    Central registry for singleton services.
-
-    This provides a clean way to access singletons that need to be shared
-    across the application without polluting the module namespace with globals.
-    """
-
     _instance: Optional["ServiceRegistry"] = None
 
-    def __init__(self) -> None:
-        self._door_control_service: Optional["DoorControlService"] = None
-        self._card_reader_polling: Optional["CardReaderPollingService"] = None
-        self._notification_service: Optional["NotificationService"] = None
+    def __init__(self):
+        self._door_control: Optional["DoorControlService"] = None
+        self._notification: Optional["NotificationService"] = None
+        self.card_reader_polling: Optional["CardReaderPollingService"] = None
 
     @classmethod
     def get(cls) -> "ServiceRegistry":
-        """Get the singleton registry instance."""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     @property
     def notification_service(self) -> "NotificationService":
-        if self._notification_service is None:
+        if self._notification is None:
             from app.services.notification_service import NotificationService
 
-            self._notification_service = NotificationService()
-        return self._notification_service
+            self._notification = NotificationService()
+        return self._notification
 
     @property
     def door_control_service(self) -> "DoorControlService":
-        if self._door_control_service is None:
+        if self._door_control is None:
             from app.services.door_control_service import DoorControlService
 
-            self._door_control_service = DoorControlService(self.notification_service)
-        return self._door_control_service
-
-    @property
-    def card_reader_polling(self) -> Optional["CardReaderPollingService"]:
-        return self._card_reader_polling
-
-    @card_reader_polling.setter
-    def card_reader_polling(self, service: "CardReaderPollingService") -> None:
-        self._card_reader_polling = service
+            self._door_control = DoorControlService(
+                self.notification_service, create_services_for_thread
+            )
+        return self._door_control
 
 
 def get_registry() -> ServiceRegistry:
-    """Get the service registry."""
     return ServiceRegistry.get()
 
 
 def _create_services(db: Session) -> Services:
-    """Create a Services instance with all dependencies."""
     from app.services.door_event_service import DoorEventService
     from app.services.door_service import DoorService
     from app.services.identifier_service import IdentifierService
@@ -153,15 +110,7 @@ def _create_services(db: Session) -> Services:
 
 @contextmanager
 def create_services_for_thread() -> Generator[Services, None, None]:
-    """Create services for use in background threads.
-
-    Background threads cannot use FastAPI's request-scoped dependency injection,
-    so they need to create their own database sessions and services.
-
-    Usage:
-        with create_services_for_thread() as services:
-            services.doors.get_all()
-    """
+    """Create services for background threads."""
     db = SessionLocal()
     try:
         yield _create_services(db)
@@ -170,20 +119,27 @@ def create_services_for_thread() -> Generator[Services, None, None]:
 
 
 def get_services(db: DbSession, _auth: ApiKeyAuth) -> Services:
-    """Dependency provider for all services.
-
-    Requires valid API key authentication if API_PASSWORD is configured.
-    """
+    """Get services with API key authentication."""
     return _create_services(db)
 
 
-def get_services_no_auth(db: DbSession) -> Services:
-    """Dependency provider for services without API authentication.
-
-    Used for UI routes that handle their own authentication.
-    """
+def get_services_ui(db: DbSession) -> Services:
+    """Get services for UI routes (no API key header check)."""
     return _create_services(db)
 
 
 ServicesDep = Annotated[Services, Depends(get_services)]
-ServicesDepNoAuth = Annotated[Services, Depends(get_services_no_auth)]
+ServicesDepUI = Annotated[Services, Depends(get_services_ui)]
+
+
+# Type hints for lazy imports
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.card_reader_polling import CardReaderPollingService
+    from app.services.door_control_service import DoorControlService
+    from app.services.door_event_service import DoorEventService
+    from app.services.door_service import DoorService
+    from app.services.identifier_service import IdentifierService
+    from app.services.notification_service import NotificationService
+    from app.services.user_service import UserService

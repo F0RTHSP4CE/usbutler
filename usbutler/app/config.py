@@ -3,38 +3,25 @@
 import os
 from pathlib import Path
 
+DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 
 class Settings:
-    """Application settings loaded from environment variables."""
+    """Application settings from environment variables."""
 
-    # Database
-    DATABASE_URL: str = os.getenv(
-        "DATABASE_URL",
-        f"sqlite:///{Path(__file__).parent.parent / 'data' / 'usbutler.db'}",
-    )
+    DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR / 'usbutler.db'}")
+    DEFAULT_DOOR_HOLD_TIME = float(os.getenv("DEFAULT_DOOR_HOLD_TIME", "0.5"))
 
-    # Door control
-    DEFAULT_DOOR_HOLD_TIME: float = float(os.getenv("DEFAULT_DOOR_HOLD_TIME", "0.5"))
+    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-    # Notifications
-    INTERNAL_WEBHOOK_URL: str = os.getenv("INTERNAL_WEBHOOK_URL", "")
-    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
+    CARD_READER_POLL_INTERVAL = float(os.getenv("CARD_READER_POLL_INTERVAL", "1"))
+    DEFAULT_DOOR_ID = int(os.getenv("DEFAULT_DOOR_ID", "1"))
 
-    # Card reader
-    CARD_READER_POLL_INTERVAL: float = float(
-        os.getenv("CARD_READER_POLL_INTERVAL", "1")
-    )
-    DEFAULT_DOOR_ID: int = int(os.getenv("DEFAULT_DOOR_ID", "1"))
+    BUTTON_DEBOUNCE_TIME = float(os.getenv("BUTTON_DEBOUNCE_TIME", "3"))
 
-    # Button monitoring
-    BUTTON_MONITOR_ENABLED: bool = os.getenv(
-        "BUTTON_MONITOR_ENABLED", "true"
-    ).lower() in ("true", "1", "yes")
-    BUTTON_DEBOUNCE_TIME: float = float(os.getenv("BUTTON_DEBOUNCE_TIME", "3"))
-
-    # API Authentication (used for both API and UI)
-    API_PASSWORD: str = os.getenv("API_PASSWORD", "")
+    API_PASSWORD = os.getenv("API_PASSWORD", "")
 
 
 settings = Settings()

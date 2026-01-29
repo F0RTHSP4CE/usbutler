@@ -1,62 +1,41 @@
 """Door schemas."""
 
+import math
 from datetime import datetime
-from enum import Enum
-from typing import Optional
-
+from typing import Optional, List
 from pydantic import BaseModel, ConfigDict
+from app.models.door_event import DoorEventType
 
 
-class DoorEventType(str, Enum):
-    """Type of door event."""
-
-    API = "api"
-    BUTTON = "button"
-    CARD = "card"
-
-
-class DoorBase(BaseModel):
-    """Base schema for door data."""
-
+class DoorCreate(BaseModel):
     name: str
     gpio_pin: int
     gpio_active_low: bool = False
     open_hold_time: float = 3.0
 
 
-class DoorCreate(DoorBase):
-    """Schema for creating a door."""
-
-    pass
-
-
 class DoorUpdate(BaseModel):
-    """Schema for updating a door."""
-
     name: Optional[str] = None
     gpio_pin: Optional[int] = None
     gpio_active_low: Optional[bool] = None
     open_hold_time: Optional[float] = None
 
 
-class DoorResponse(DoorBase):
-    """Schema for door response."""
-
+class DoorResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     id: int
+    name: str
+    gpio_pin: int
+    gpio_active_low: bool
+    open_hold_time: float
 
 
 class DoorOpenRequest(BaseModel):
-    """Schema for door open request."""
-
     user_id: Optional[int] = None
     username: Optional[str] = None
 
 
 class DoorOpenResponse(BaseModel):
-    """Schema for door open response."""
-
     success: bool
     message: str
     door_id: int
@@ -64,8 +43,6 @@ class DoorOpenResponse(BaseModel):
 
 
 class LastDoorEventResponse(BaseModel):
-    """Schema for last door event response."""
-
     door_name: Optional[str] = None
     door_id: Optional[int] = None
     gpio_pin: Optional[int] = None
@@ -75,10 +52,7 @@ class LastDoorEventResponse(BaseModel):
 
 
 class DoorEventResponse(BaseModel):
-    """Schema for door event history response."""
-
     model_config = ConfigDict(from_attributes=True)
-
     id: int
     door_id: int
     door_name: str
@@ -89,9 +63,7 @@ class DoorEventResponse(BaseModel):
 
 
 class DoorEventListResponse(BaseModel):
-    """Schema for paginated door event list response."""
-
-    items: list[DoorEventResponse]
+    items: List[DoorEventResponse]
     total: int
     page: int
     page_size: int

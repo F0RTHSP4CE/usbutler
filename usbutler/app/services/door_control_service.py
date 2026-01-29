@@ -1,447 +1,303 @@
 """Door control service for GPIO operations with button monitoring."""
 
-import asyncio
 import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Dict, List, Optional
+from contextlib import AbstractContextManager
+from typing import TYPE_CHECKING, Callable, Dict, Generator, List, Optional
 
 from app.config import settings
 from app.models.door import Door
 from app.models.door_event import DoorEventType
 from app.services.notification_service import NotificationService
 
+if TYPE_CHECKING:
+    from app.dependencies import Services
+
 logger = logging.getLogger(__name__)
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="door_")
 
-# Thread pool for non-blocking door operations
-_door_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="door_control_")
-
-
-@dataclass
-class LastDoorEvent:
-    """Information about the last door event."""
-
-    door_name: str
-    door_id: int
-    gpio_pin: int
-    event_type: DoorEventType
-    username: Optional[str]
-    timestamp: datetime
+# Type alias for session factory
+SessionFactory = Callable[[], AbstractContextManager["Services"]]
 
 
 class DoorControlService:
-    """Service for controlling physical doors via GPIO with button monitoring.
+    """Controls physical doors via GPIO with button monitoring."""
 
-    This service operates GPIO pins in input mode by default to detect button presses.
-    When a door open is requested via API, it temporarily switches to output mode,
-    triggers the relay, and then returns to input mode for button monitoring.
-    """
-
-    def __init__(self, notification_service: NotificationService):
+    def __init__(
+        self,
+        notification_service: NotificationService,
+        session_factory: SessionFactory,
+    ):
         self.notification_service = notification_service
-        self._gpio_available = self._check_gpio_available()
+        self.session_factory = session_factory
+        self._gpio_available = self._check_gpio()
 
-        # Button monitoring state
         self._monitor_thread: Optional[threading.Thread] = None
-        self._monitor_stop_event = threading.Event()
-        self._monitored_doors: Dict[int, Door] = {}  # gpio_pin -> Door
-        self._pin_locks: Dict[int, threading.Lock] = {}  # gpio_pin -> Lock
-        self._last_button_press: Dict[int, float] = {}  # gpio_pin -> timestamp
-        self._pin_in_output_mode: Dict[int, bool] = {}  # gpio_pin -> is_output
-        self._pin_released_events: Dict[int, threading.Event] = {}  # gpio_pin -> Event
+        self._stop_event = threading.Event()
+        self._doors: Dict[int, Door] = {}  # gpio_pin -> Door
+        self._pin_locks: Dict[int, threading.Lock] = {}
+        self._last_button_press: Dict[int, float] = {}
+        self._pin_in_output: Dict[int, bool] = {}
+        self._pin_released: Dict[int, threading.Event] = {}
 
-        # Last door event tracking
-        self._last_door_event: Optional[LastDoorEvent] = None
-        self._last_door_event_lock = threading.Lock()
+    def _check_gpio(self) -> bool:
+        try:
+            import gpiod
 
-    def _persist_door_event(
+            return True
+        except ImportError:
+            logger.warning("gpiod not available, GPIO will be simulated")
+            return False
+
+    def _persist_event(
         self,
         door_id: int,
         event_type: DoorEventType,
         username: Optional[str] = None,
-    ) -> None:
-        """Persist a door event to the database."""
-        from app.dependencies import create_services_for_thread
-
+        user_id: Optional[int] = None,
+    ):
         try:
-            with create_services_for_thread() as services:
+            with self.session_factory() as services:
                 services.door_events.create(
                     door_id=door_id,
                     event_type=event_type,
                     username=username,
+                    user_id=user_id,
                 )
         except Exception as e:
             logger.error(f"Failed to persist door event: {e}")
 
-    def get_last_door_event(self) -> Optional[dict]:
-        """Get the last door event information."""
-        with self._last_door_event_lock:
-            if self._last_door_event:
-                return {
-                    "door_name": self._last_door_event.door_name,
-                    "door_id": self._last_door_event.door_id,
-                    "gpio_pin": self._last_door_event.gpio_pin,
-                    "event_type": self._last_door_event.event_type.value,  # Convert enum to string
-                    "username": self._last_door_event.username,
-                    "timestamp": self._last_door_event.timestamp,
-                }
-            return None
-
-    def _record_door_event(
+    def _persist_event_async(
         self,
-        door: Door,
+        door_id: int,
         event_type: DoorEventType,
         username: Optional[str] = None,
-    ) -> None:
-        """Record a door event."""
-        with self._last_door_event_lock:
-            self._last_door_event = LastDoorEvent(
-                door_name=door.name,
-                door_id=door.id,
-                gpio_pin=door.gpio_pin,
-                event_type=event_type,
-                username=username,
-                timestamp=datetime.now(),
-            )
+        user_id: Optional[int] = None,
+    ):
+        """Persist event asynchronously for use in event loops/monitoring."""
+        _executor.submit(self._persist_event, door_id, event_type, username, user_id)
 
-    def _check_gpio_available(self) -> bool:
-        """Check if gpiod is available."""
+    def get_last_door_event(self) -> Optional[dict]:
+        """Get the most recent door event from database."""
         try:
-            import gpiod  # noqa: F401
+            with self.session_factory() as services:
+                events, _ = services.door_events.get_history(page=1, page_size=1)
+                if not events:
+                    return None
 
-            return True
-        except ImportError:
-            logger.warning("gpiod not available, GPIO operations will be simulated")
-            return False
+                event = events[0]
+                door = services.doors.get_by_id(event.door_id)
+
+                return {
+                    "door_name": door.name if door else f"Door #{event.door_id}",
+                    "door_id": event.door_id,
+                    "gpio_pin": door.gpio_pin if door else 0,
+                    "event_type": event.event_type.value,
+                    "username": event.username,
+                    "timestamp": event.timestamp,
+                }
+        except Exception as e:
+            logger.error(f"Failed to get last door event: {e}")
+            return None
 
     def start_button_monitoring(self, doors: List[Door]) -> None:
-        """Start monitoring buttons for the given doors.
-
-        Args:
-            doors: List of Door objects to monitor for button presses.
-        """
-        if not settings.BUTTON_MONITOR_ENABLED:
-            logger.info("Button monitoring is disabled by configuration")
-            return
-
         if self._monitor_thread and self._monitor_thread.is_alive():
-            logger.warning("Button monitoring already running")
             return
 
-        # Register doors for monitoring
         for door in doors:
-            self._monitored_doors[door.gpio_pin] = door
-            self._pin_locks[door.gpio_pin] = threading.Lock()
-            self._last_button_press[door.gpio_pin] = 0
-            self._pin_in_output_mode[door.gpio_pin] = False
-            self._pin_released_events[door.gpio_pin] = threading.Event()
-            self._pin_released_events[door.gpio_pin].set()  # Initially released
+            pin = door.gpio_pin
+            self._doors[pin] = door
+            self._pin_locks[pin] = threading.Lock()
+            self._last_button_press[pin] = 0
+            self._pin_in_output[pin] = False
+            self._pin_released[pin] = threading.Event()
+            self._pin_released[pin].set()
 
-        if not self._monitored_doors:
-            logger.info("No doors to monitor for button presses")
+        if not self._doors:
             return
 
-        self._monitor_stop_event.clear()
-        self._monitor_thread = threading.Thread(
-            target=self._button_monitor_loop,
-            name="button_monitor",
-            daemon=True,
-        )
+        self._stop_event.clear()
+        self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
-        logger.info(f"Button monitoring started for {len(self._monitored_doors)} doors")
+        logger.info(f"Button monitoring started for {len(self._doors)} doors")
 
     def stop_button_monitoring(self) -> None:
-        """Stop the button monitoring thread."""
         if self._monitor_thread and self._monitor_thread.is_alive():
-            self._monitor_stop_event.set()
+            self._stop_event.set()
             self._monitor_thread.join(timeout=2.0)
-            logger.info("Button monitoring stopped")
-        self._monitored_doors.clear()
+        self._doors.clear()
         self._pin_locks.clear()
 
     def update_monitored_doors(self, doors: List[Door]) -> None:
-        """Update the list of monitored doors (e.g., after database changes)."""
-        new_pins = {door.gpio_pin for door in doors}
-        old_pins = set(self._monitored_doors.keys())
+        new_pins = {d.gpio_pin for d in doors}
+        old_pins = set(self._doors.keys())
 
-        # Remove doors no longer in list
         for pin in old_pins - new_pins:
-            del self._monitored_doors[pin]
-            del self._pin_locks[pin]
-            if pin in self._last_button_press:
-                del self._last_button_press[pin]
-            if pin in self._pin_in_output_mode:
-                del self._pin_in_output_mode[pin]
-            if pin in self._pin_released_events:
-                del self._pin_released_events[pin]
+            self._doors.pop(pin, None)
+            self._pin_locks.pop(pin, None)
+            self._last_button_press.pop(pin, None)
+            self._pin_in_output.pop(pin, None)
+            self._pin_released.pop(pin, None)
 
-        # Add new doors
         for door in doors:
-            if door.gpio_pin not in self._monitored_doors:
-                self._monitored_doors[door.gpio_pin] = door
-                self._pin_locks[door.gpio_pin] = threading.Lock()
-                self._last_button_press[door.gpio_pin] = 0
-                self._pin_in_output_mode[door.gpio_pin] = False
-                self._pin_released_events[door.gpio_pin] = threading.Event()
-                self._pin_released_events[door.gpio_pin].set()  # Initially released
+            pin = door.gpio_pin
+            if pin not in self._doors:
+                self._doors[pin] = door
+                self._pin_locks[pin] = threading.Lock()
+                self._last_button_press[pin] = 0
+                self._pin_in_output[pin] = False
+                self._pin_released[pin] = threading.Event()
+                self._pin_released[pin].set()
             else:
-                # Update existing door info
-                self._monitored_doors[door.gpio_pin] = door
+                self._doors[pin] = door
 
-    def _button_monitor_loop(self) -> None:
-        """Main loop for monitoring button presses on GPIO pins using edge events."""
+    def _monitor_loop(self) -> None:
         if not self._gpio_available:
-            logger.info(
-                "GPIO not available, button monitoring running in simulation mode"
-            )
-            # In simulation mode, just keep the thread alive but don't do anything
-            while not self._monitor_stop_event.is_set():
-                self._monitor_stop_event.wait(timeout=1.0)
+            while not self._stop_event.is_set():
+                self._stop_event.wait(timeout=1.0)
             return
 
         import gpiod
         from gpiod.line import Direction, Bias, Edge
 
-        chip_path = "/dev/gpiochip0"
-
-        logger.info("Button monitor loop starting with edge detection...")
-
-        while not self._monitor_stop_event.is_set():
-            # Get current pins to monitor (excluding those in output mode)
-            pins_to_monitor = {
-                pin: door
-                for pin, door in self._monitored_doors.items()
-                if not self._pin_in_output_mode.get(pin, False)
+        while not self._stop_event.is_set():
+            pins = {
+                p: d for p, d in self._doors.items() if not self._pin_in_output.get(p)
             }
-
-            if not pins_to_monitor:
-                # No pins to monitor, wait and retry
-                self._monitor_stop_event.wait(timeout=0.5)
+            if not pins:
+                self._stop_event.wait(timeout=0.5)
                 continue
 
             try:
-                # Configure all pins for edge detection with pull-up
                 config = {
                     pin: gpiod.LineSettings(
                         direction=Direction.INPUT,
                         bias=Bias.PULL_UP,
-                        edge_detection=Edge.FALLING,  # Detect button press (high->low)
+                        edge_detection=Edge.FALLING,
                     )
-                    for pin in pins_to_monitor.keys()
+                    for pin in pins
                 }
 
                 with gpiod.request_lines(
-                    chip_path,
-                    consumer="usbutler-button",
-                    config=config,
-                ) as request:
-                    # Clear released events for pins we're now holding
-                    for pin in pins_to_monitor:
-                        event = self._pin_released_events.get(pin)
-                        if event:
-                            event.clear()
+                    "/dev/gpiochip0", consumer="usbutler", config=config
+                ) as req:
+                    for pin in pins:
+                        if ev := self._pin_released.get(pin):
+                            ev.clear()
 
-                    # Wait for events with timeout so we can check for stop signal
-                    # and re-evaluate which pins to monitor
-                    while not self._monitor_stop_event.is_set():
-                        # Check if any pin switched to output mode
-                        if any(
-                            self._pin_in_output_mode.get(pin, False)
-                            for pin in pins_to_monitor
-                        ):
-                            # Need to release and re-request with updated pin list
+                    while not self._stop_event.is_set():
+                        if any(self._pin_in_output.get(p) for p in pins):
                             break
 
-                        # Wait for edge event with timeout
-                        if request.wait_edge_events(timeout=0.5):
-                            for event in request.read_edge_events():
-                                gpio_pin = event.line_offset
-                                door = pins_to_monitor.get(gpio_pin)
-
-                                if not door:
+                        if req.wait_edge_events(timeout=0.5):
+                            for event in req.read_edge_events():
+                                pin = event.line_offset
+                                door = pins.get(pin)
+                                if not door or self._pin_in_output.get(pin):
                                     continue
 
-                                # Skip if pin is now in output mode
-                                if self._pin_in_output_mode.get(gpio_pin, False):
-                                    continue
-
-                                current_time = time.time()
-                                last_press = self._last_button_press.get(gpio_pin, 0)
-
-                                # Debounce: only trigger if enough time has passed
+                                now = time.time()
                                 if (
-                                    current_time - last_press
+                                    now - self._last_button_press.get(pin, 0)
                                     > settings.BUTTON_DEBOUNCE_TIME
                                 ):
-                                    self._last_button_press[gpio_pin] = current_time
+                                    self._last_button_press[pin] = now
                                     logger.info(
-                                        f"Button press detected on GPIO {gpio_pin} "
-                                        f"for door '{door.name}'"
+                                        f"Button press on GPIO {pin} for '{door.name}'"
                                     )
-                                    # Record the event (in-memory)
-                                    self._record_door_event(door, DoorEventType.BUTTON)
-                                    # Persist to database
-                                    _door_executor.submit(
-                                        self._persist_door_event,
-                                        door.id,
-                                        DoorEventType.BUTTON,
-                                        None,
+                                    self._persist_event_async(
+                                        door.id, DoorEventType.BUTTON
                                     )
-                                    # Send notification (non-blocking, uses its own thread pool)
-                                    self.notification_service.notify_button_pressed(
-                                        door.name,
-                                        gpio_pin,
+                                    self.notification_service.notify_button_pressed_async(
+                                        door.name, pin
                                     )
 
-                # Lines released - signal waiting threads
-                for pin in pins_to_monitor:
-                    event = self._pin_released_events.get(pin)
-                    if event:
-                        event.set()
+                for pin in pins:
+                    if ev := self._pin_released.get(pin):
+                        ev.set()
 
             except Exception as e:
-                logger.error(f"Error in button monitor: {e}")
-                # Signal release on error too
-                for pin in pins_to_monitor:
-                    event = self._pin_released_events.get(pin)
-                    if event:
-                        event.set()
-                # Wait before retrying
-                self._monitor_stop_event.wait(timeout=1.0)
-
-        logger.info("Button monitor loop exiting")
+                logger.error(f"Button monitor error: {e}")
+                for pin in pins:
+                    if ev := self._pin_released.get(pin):
+                        ev.set()
+                self._stop_event.wait(timeout=1.0)
 
     def _open_door_sync(
         self,
         door: Door,
         username: Optional[str] = None,
         event_type: DoorEventType = DoorEventType.API,
+        user_id: Optional[int] = None,
     ) -> bool:
-        """
-        Synchronously open a door using GPIO.
-
-        This method:
-        1. Acquires the pin lock to pause button monitoring
-        2. Marks pin as in output mode
-        3. Requests the GPIO line as output
-        4. Sets it to active state
-        5. Waits for the hold time
-        6. Sets it to inactive state
-        7. Releases the line
-        8. Marks pin as back in input mode
-        9. Releases the lock
-        10. Sends notifications
-        """
-        logger.info(
-            f"Opening door '{door.name}' (pin={door.gpio_pin}, "
-            f"active_low={door.gpio_active_low}, hold_time={door.open_hold_time}s)"
-        )
-
-        success = False
-        gpio_pin = door.gpio_pin
-        lock = self._pin_locks.get(gpio_pin)
-        released_event = self._pin_released_events.get(gpio_pin)
+        logger.info(f"Opening door '{door.name}' (pin={door.gpio_pin})")
+        pin = door.gpio_pin
+        lock = self._pin_locks.get(pin)
+        released = self._pin_released.get(pin)
 
         try:
-            # Acquire lock to pause button monitoring for this pin
             if lock:
                 lock.acquire()
+            self._pin_in_output[pin] = True
+            if released:
+                released.wait(timeout=2.0)
 
-            # Signal that we need output mode and wait for button monitor to release
-            self._pin_in_output_mode[gpio_pin] = True
-            if released_event:
-                # Wait for button monitor to release the pin (max 2 seconds)
-                if not released_event.wait(timeout=2.0):
-                    logger.warning(f"Timeout waiting for GPIO {gpio_pin} release")
-
-            if self._gpio_available:
-                success = self._control_gpio(door)
-            else:
-                success = self._simulate_gpio(door)
-
+            success = (
+                self._control_gpio(door)
+                if self._gpio_available
+                else self._simulate_gpio(door)
+            )
         except Exception as e:
-            logger.error(f"Error controlling door '{door.name}': {e}")
+            logger.error(f"Error opening door '{door.name}': {e}")
             success = False
         finally:
-            # Release lock and mark pin as back in input mode
-            self._pin_in_output_mode[gpio_pin] = False
+            self._pin_in_output[pin] = False
             if lock:
                 lock.release()
 
-        # Record the event
         if success:
-            self._record_door_event(door, event_type, username)
+            self._persist_event(door.id, event_type, username, user_id)
 
-        # Send notifications
-        self.notification_service.notify_door_opened(
-            door_name=door.name,
-            username=username,
-            success=success,
-        )
-
+        self.notification_service.notify_door_opened_async(door.name, username, success)
         return success
 
     def _control_gpio(self, door: Door) -> bool:
-        """Control the door using gpiod."""
         import gpiod
         from gpiod.line import Direction, Value
 
-        # Determine active/inactive values based on active_low setting
-        active_value = Value.INACTIVE if door.gpio_active_low else Value.ACTIVE
-        inactive_value = Value.ACTIVE if door.gpio_active_low else Value.INACTIVE
+        active = Value.INACTIVE if door.gpio_active_low else Value.ACTIVE
+        inactive = Value.ACTIVE if door.gpio_active_low else Value.INACTIVE
 
         try:
-            # Find the GPIO chip (usually /dev/gpiochip0 on Raspberry Pi)
-            chip_path = "/dev/gpiochip0"
-
             with gpiod.request_lines(
-                chip_path,
+                "/dev/gpiochip0",
                 consumer="usbutler-door",
                 config={door.gpio_pin: gpiod.LineSettings(direction=Direction.OUTPUT)},
-            ) as request:
-                # Set to active state (open door)
-                request.set_value(door.gpio_pin, active_value)
-                logger.debug(f"GPIO {door.gpio_pin} set to active (output mode)")
-
-                # Hold for specified time
+            ) as req:
+                req.set_value(door.gpio_pin, active)
                 time.sleep(door.open_hold_time)
-
-                # Set to inactive state (close door)
-                request.set_value(door.gpio_pin, inactive_value)
-                logger.debug(f"GPIO {door.gpio_pin} set to inactive")
-
-            logger.info(f"Door '{door.name}' opened successfully")
+                req.set_value(door.gpio_pin, inactive)
             return True
-
         except Exception as e:
-            logger.error(f"GPIO control error for door '{door.name}': {e}")
+            logger.error(f"GPIO error for '{door.name}': {e}")
             return False
 
     def _simulate_gpio(self, door: Door) -> bool:
-        """Simulate GPIO control when gpiod is not available."""
-        logger.info(f"[SIMULATED] Setting GPIO {door.gpio_pin} to active (output mode)")
+        logger.info(f"[SIM] GPIO {door.gpio_pin} active")
         time.sleep(door.open_hold_time)
-        logger.info(f"[SIMULATED] Setting GPIO {door.gpio_pin} to inactive")
+        logger.info(f"[SIM] GPIO {door.gpio_pin} inactive")
         return True
 
-    def open_door(
+    def open_door_async(
         self,
         door: Door,
         username: Optional[str] = None,
         event_type: DoorEventType = DoorEventType.API,
+        user_id: Optional[int] = None,
     ) -> bool:
-        """
-        Open a door asynchronously (non-blocking for the web server).
-
-        Submits the door opening operation to a thread pool and returns immediately.
-        """
-        future = _door_executor.submit(self._open_door_sync, door, username, event_type)
-        # We don't wait for the result here to keep it non-blocking
-        # The future will complete in the background
-        logger.info(f"Door open request submitted for '{door.name}'")
+        _executor.submit(self._open_door_sync, door, username, event_type, user_id)
         return True
 
     def open_door_blocking(
@@ -449,42 +305,9 @@ class DoorControlService:
         door: Door,
         username: Optional[str] = None,
         event_type: DoorEventType = DoorEventType.API,
+        user_id: Optional[int] = None,
     ) -> bool:
-        """
-        Open a door synchronously (blocking).
+        return self._open_door_sync(door, username, event_type, user_id)
 
-        Use this when you need to wait for the operation to complete.
-        """
-        return self._open_door_sync(door, username, event_type)
-
-    def open_door_for_card(
-        self,
-        door: Door,
-        username: Optional[str] = None,
-    ) -> bool:
-        """
-        Open a door for a card scan (non-blocking).
-
-        This is a convenience method that sets the event type to CARD.
-        """
-        return self.open_door(door, username, DoorEventType.CARD)
-
-    async def open_door_async(
-        self,
-        door: Door,
-        username: Optional[str] = None,
-        event_type: DoorEventType = DoorEventType.API,
-    ) -> bool:
-        """
-        Open a door asynchronously using asyncio.
-
-        This is the preferred method for use in async contexts like FastAPI endpoints.
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            _door_executor,
-            self._open_door_sync,
-            door,
-            username,
-            event_type,
-        )
+    def open_door_for_card(self, door: Door, username: Optional[str] = None) -> bool:
+        return self.open_door_async(door, username, DoorEventType.CARD)

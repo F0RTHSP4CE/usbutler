@@ -2,9 +2,7 @@
 
 import logging
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
-
 from app.config import settings
 from app.database import init_db
 from app.dependencies import create_services_for_thread, get_registry
@@ -13,45 +11,33 @@ from app.routers import doors_router, identifiers_router, users_router, ui_route
 from app.services.card_reader import CardReaderService
 from app.services.card_reader_polling import CardReaderPollingService
 
-# Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# Hardware singletons (not part of DI, as they represent physical devices)
 nfc_reader = NFCReader()
 card_reader_service = CardReaderService(nfc_reader)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan handler for startup and shutdown."""
-    # Startup
     logger.info("Starting usbutler...")
-
-    # Initialize database
     init_db()
-    logger.info("Database initialized")
 
-    # Get the service registry
     registry = get_registry()
-    door_control_service = registry.door_control_service
+    door_control = registry.door_control_service
 
-    # Start button monitoring for all configured doors
     with create_services_for_thread() as services:
         doors = services.doors.get_all()
         if doors:
-            door_control_service.start_button_monitoring(doors)
+            door_control.start_button_monitoring(doors)
             logger.info(f"Button monitoring started for {len(doors)} doors")
-        else:
-            logger.info("No doors configured, button monitoring not started")
 
-    # Start card reader polling
     card_reader_polling = CardReaderPollingService(
         card_reader_service=card_reader_service,
-        door_control_service=door_control_service,
+        door_control_service=door_control,
+        session_factory=create_services_for_thread,
         poll_interval=settings.CARD_READER_POLL_INTERVAL,
         default_door_id=settings.DEFAULT_DOOR_ID,
     )
@@ -61,27 +47,13 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
     logger.info("Shutting down usbutler...")
-
-    # Stop button monitoring
-    door_control_service.stop_button_monitoring()
-    logger.info("Button monitoring stopped")
-
+    door_control.stop_button_monitoring()
     if registry.card_reader_polling:
         registry.card_reader_polling.stop()
-        logger.info("Card reader polling stopped")
 
 
-# Create FastAPI application
-app = FastAPI(
-    title="USButler",
-    description="Access control system with NFC card reader support",
-    version="2.0.0",
-    lifespan=lifespan,
-)
-
-# Include routers
+app = FastAPI(title="USButler", version="2.0.0", lifespan=lifespan)
 app.include_router(users_router, prefix="/api")
 app.include_router(doors_router, prefix="/api")
 app.include_router(identifiers_router, prefix="/api")
@@ -90,26 +62,9 @@ app.include_router(ui_router)
 
 @app.get("/api")
 async def api_root():
-    """API root endpoint."""
-    return {
-        "name": "USButler",
-        "version": "2.0.0",
-        "status": "running",
-    }
+    return {"name": "USButler", "version": "2.0.0", "status": "running"}
 
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
     return {"status": "healthy"}
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-    )

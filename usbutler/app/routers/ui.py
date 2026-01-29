@@ -2,83 +2,57 @@
 
 import secrets
 from typing import Optional
-
 from fastapi import APIRouter, Cookie, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-
 from app.config import settings
-from app.dependencies import ServicesDepNoAuth
+from app.dependencies import ServicesDepUI
 
 router = APIRouter(tags=["ui"])
-
 templates = Jinja2Templates(directory="app/templates")
 
 
-def _is_authenticated(api_key: Optional[str]) -> bool:
-    """Check if the API key cookie is valid."""
+def _is_auth(api_key: Optional[str]) -> bool:
     if not settings.API_PASSWORD:
-        # No password configured, allow all
         return True
-    if not api_key:
-        return False
-    return secrets.compare_digest(api_key, settings.API_PASSWORD)
-
-
-def _require_auth(api_key: Optional[str]):
-    """Check authentication and return redirect if not authenticated."""
-    if not _is_authenticated(api_key):
-        return RedirectResponse(url="/login", status_code=302)
-    return None
+    return bool(
+        api_key
+        and secrets.compare_digest(
+            api_key.encode("utf-8"), settings.API_PASSWORD.encode("utf-8")
+        )
+    )
 
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, api_key: Optional[str] = Cookie(None)):
-    """Login page."""
-    # If already authenticated, redirect to home
-    if _is_authenticated(api_key):
+    if _is_auth(api_key) or not settings.API_PASSWORD:
         return RedirectResponse(url="/", status_code=302)
-
-    # If no password is set, redirect to home
-    if not settings.API_PASSWORD:
-        return RedirectResponse(url="/", status_code=302)
-
-    return templates.TemplateResponse(
-        "login.html",
-        {"request": request, "error": None},
-    )
+    return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
 
 @router.post("/login", response_class=HTMLResponse)
-async def login_submit(
-    request: Request,
-    password: str = Form(...),
-):
-    """Handle login form submission."""
+async def login_submit(request: Request, password: str = Form(...)):
     if not settings.API_PASSWORD:
         return RedirectResponse(url="/", status_code=302)
-
-    if secrets.compare_digest(password, settings.API_PASSWORD):
-        # Store the API password in a cookie for browser to use in API calls
+    if secrets.compare_digest(
+        password.encode("utf-8"), settings.API_PASSWORD.encode("utf-8")
+    ):
         response = RedirectResponse(url="/", status_code=302)
         response.set_cookie(
             key="api_key",
             value=password,
-            httponly=False,  # JavaScript needs access to send in API requests
+            httponly=False,
             samesite="lax",
-            max_age=60 * 60 * 24 * 7,  # 1 week
+            max_age=604800,
         )
         return response
-
     return templates.TemplateResponse(
-        "login.html",
-        {"request": request, "error": "Invalid password"},
+        "login.html", {"request": request, "error": "Invalid password"}
     )
 
 
 @router.get("/logout")
 async def logout():
-    """Log out and clear session."""
     response = RedirectResponse(url="/login", status_code=302)
     response.delete_cookie("api_key")
     return response
@@ -86,18 +60,12 @@ async def logout():
 
 @router.get("/", response_class=HTMLResponse)
 async def index(
-    request: Request,
-    s: ServicesDepNoAuth,
-    api_key: Optional[str] = Cookie(None),
+    request: Request, s: ServicesDepUI, api_key: Optional[str] = Cookie(None)
 ):
-    """Main page - users and card scanning."""
-    if redirect := _require_auth(api_key):
-        return redirect
+    if not _is_auth(api_key):
+        return RedirectResponse(url="/login", status_code=302)
 
-    users = s.users.get_all()
-
-    last_scan = None
-    last_scan_identifier = None
+    last_scan, last_scan_identifier = None, None
     if s.card_reader_polling:
         last_scan = s.card_reader_polling.get_last_scan()
         if last_scan:
@@ -107,7 +75,7 @@ async def index(
         "index.html",
         {
             "request": request,
-            "users": users,
+            "users": s.users.get_all(),
             "last_scan": last_scan,
             "last_scan_identifier": last_scan_identifier,
             "auth_enabled": bool(settings.API_PASSWORD),
@@ -117,17 +85,11 @@ async def index(
 
 @router.get("/doors", response_class=HTMLResponse)
 async def doors_page(
-    request: Request,
-    s: ServicesDepNoAuth,
-    api_key: Optional[str] = Cookie(None),
+    request: Request, s: ServicesDepUI, api_key: Optional[str] = Cookie(None)
 ):
-    """Doors management page."""
-    if redirect := _require_auth(api_key):
-        return redirect
+    if not _is_auth(api_key):
+        return RedirectResponse(url="/login", status_code=302)
 
-    last_event = s.door_control.get_last_door_event()
-
-    # Get recent door events for history (last 20)
     events, _ = s.door_events.get_history(page=1, page_size=20)
     history = []
     for event in events:
@@ -147,7 +109,7 @@ async def doors_page(
         {
             "request": request,
             "doors": s.doors.get_all(),
-            "last_event": last_event,
+            "last_event": s.door_control.get_last_door_event(),
             "history": history,
             "auth_enabled": bool(settings.API_PASSWORD),
         },

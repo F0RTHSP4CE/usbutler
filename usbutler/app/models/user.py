@@ -2,10 +2,8 @@
 
 import enum
 from typing import TYPE_CHECKING, List
-
 from sqlalchemy import String, Enum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
 from app.database import Base
 
 if TYPE_CHECKING:
@@ -13,15 +11,11 @@ if TYPE_CHECKING:
 
 
 class UserStatus(str, enum.Enum):
-    """User status enumeration."""
-
     ACTIVE = "active"
     INACTIVE = "inactive"
 
 
 class User(Base):
-    """User model representing a system user."""
-
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
@@ -29,11 +23,6 @@ class User(Base):
     status: Mapped[UserStatus] = mapped_column(
         Enum(UserStatus), default=UserStatus.ACTIVE
     )
-
-    # Relationships
     identifiers: Mapped[List["Identifier"]] = relationship(
         "Identifier", back_populates="user", cascade="all, delete-orphan"
     )
-
-    def __repr__(self) -> str:
-        return f"<User(id={self.id}, username={self.username}, status={self.status})>"
