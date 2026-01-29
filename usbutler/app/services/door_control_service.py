@@ -64,7 +64,6 @@ class DoorControlService:
         username: Optional[str] = None,
     ) -> None:
         """Persist a door event to the database."""
-        # Import here to avoid circular import
         from app.dependencies import create_services_for_thread
 
         try:
@@ -291,9 +290,8 @@ class DoorControlService:
                                         DoorEventType.BUTTON,
                                         None,
                                     )
-                                    # Send notification in a separate thread
-                                    _door_executor.submit(
-                                        self.notification_service.notify_button_pressed,
+                                    # Send notification (non-blocking, uses its own thread pool)
+                                    self.notification_service.notify_button_pressed(
                                         door.name,
                                         gpio_pin,
                                     )

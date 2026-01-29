@@ -1,11 +1,21 @@
 """Authentication service for card-based access control."""
 
-from typing import Optional, Tuple
+from typing import Optional, Protocol, Tuple
 
 from app.models.identifier import Identifier
 from app.models.user import User, UserStatus
-from app.services.identifier_service import IdentifierService
-from app.services.user_service import UserService
+
+
+class UserServiceProtocol(Protocol):
+    """Protocol for user service (supports both regular and thread-safe)."""
+
+    def get_by_id(self, user_id: int) -> Optional[User]: ...
+
+
+class IdentifierServiceProtocol(Protocol):
+    """Protocol for identifier service (supports both regular and thread-safe)."""
+
+    def get_by_value(self, value: str) -> Optional[Identifier]: ...
 
 
 class AuthService:
@@ -13,8 +23,8 @@ class AuthService:
 
     def __init__(
         self,
-        user_service: UserService,
-        identifier_service: IdentifierService,
+        user_service: UserServiceProtocol,
+        identifier_service: IdentifierServiceProtocol,
     ):
         self.user_service = user_service
         self.identifier_service = identifier_service

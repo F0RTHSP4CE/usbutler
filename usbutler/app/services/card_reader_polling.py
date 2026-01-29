@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Optional
 
-from app.emv.nfc_reader import NFCReader
 from app.models.door_event import DoorEventType
 from app.models.identifier import IdentifierType
 from app.services.auth_service import AuthService
@@ -190,10 +189,8 @@ class CardReaderPollingService:
 
     def _process_authentication(self, identifier_value: str) -> None:
         """Process authentication for a scanned identifier."""
-        # Import here to avoid circular import
         from app.dependencies import create_services_for_thread
 
-        # Create services with their own DB session for thread safety
         with create_services_for_thread() as services:
             auth = AuthService(services.users, services.identifiers)
 

@@ -1,9 +1,10 @@
 """Database setup and session management."""
 
 from pathlib import Path
+from typing import Generator
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
 
@@ -17,6 +18,7 @@ engine = create_engine(
     connect_args=(
         {"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
     ),
+    pool_pre_ping=True,  # Verify connections before use
     echo=False,
 )
 
@@ -29,15 +31,6 @@ class Base(DeclarativeBase):
     pass
 
 
-def get_db():
-    """Dependency that provides a database session."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-def init_db():
+def init_db() -> None:
     """Initialize the database by creating all tables."""
     Base.metadata.create_all(bind=engine)

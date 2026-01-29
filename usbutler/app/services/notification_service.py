@@ -1,6 +1,7 @@
 """Notification service for sending alerts."""
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import requests
@@ -9,9 +10,20 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Dedicated thread pool for notification HTTP calls to avoid blocking
+_notification_executor = ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="notification_",
+)
+
 
 class NotificationService:
-    """Service for sending notifications to various endpoints."""
+    """Service for sending notifications to various endpoints.
+
+    All notification methods are non-blocking and run in a dedicated thread pool
+    to avoid blocking the caller (whether it's an async FastAPI handler or a
+    background thread).
+    """
 
     def __init__(
         self,
@@ -25,13 +37,13 @@ class NotificationService:
         self.telegram_bot_token = telegram_bot_token or settings.TELEGRAM_BOT_TOKEN
         self.telegram_chat_id = telegram_chat_id or settings.TELEGRAM_CHAT_ID
 
-    def send_internal_notification(
+    def _send_internal_notification_sync(
         self,
         door_name: str,
         username: Optional[str] = None,
         success: bool = True,
     ) -> bool:
-        """Send notification to internal HTTP endpoint."""
+        """Send notification to internal HTTP endpoint (blocking)."""
         if not self.internal_webhook_url:
             logger.debug("Internal webhook URL not configured, skipping notification")
             return False
@@ -65,13 +77,13 @@ class NotificationService:
             logger.error(f"Failed to send internal notification: {e}")
             return False
 
-    def send_telegram_notification(
+    def _send_telegram_notification_sync(
         self,
         door_name: str,
         username: Optional[str] = None,
         success: bool = True,
     ) -> bool:
-        """Send notification to Telegram channel via bot API."""
+        """Send notification to Telegram channel via bot API (blocking)."""
         if not self.telegram_bot_token or not self.telegram_chat_id:
             logger.debug("Telegram not configured, skipping notification")
             return False
@@ -107,25 +119,33 @@ class NotificationService:
         username: Optional[str] = None,
         success: bool = True,
     ) -> None:
-        """Send notifications to all configured channels."""
-        self.send_internal_notification(door_name, username, success)
-        self.send_telegram_notification(door_name, username, success)
+        """Send notifications to all configured channels (non-blocking)."""
+        _notification_executor.submit(
+            self._send_internal_notification_sync, door_name, username, success
+        )
+        _notification_executor.submit(
+            self._send_telegram_notification_sync, door_name, username, success
+        )
 
     def notify_button_pressed(
         self,
         door_name: str,
         gpio_pin: int,
     ) -> None:
-        """Send notification when external button is pressed."""
-        self._send_button_internal_notification(door_name, gpio_pin)
-        self._send_button_telegram_notification(door_name, gpio_pin)
+        """Send notification when external button is pressed (non-blocking)."""
+        _notification_executor.submit(
+            self._send_button_internal_notification_sync, door_name, gpio_pin
+        )
+        _notification_executor.submit(
+            self._send_button_telegram_notification_sync, door_name, gpio_pin
+        )
 
-    def _send_button_internal_notification(
+    def _send_button_internal_notification_sync(
         self,
         door_name: str,
         gpio_pin: int,
     ) -> bool:
-        """Send button press notification to internal HTTP endpoint."""
+        """Send button press notification to internal HTTP endpoint (blocking)."""
         if not self.internal_webhook_url:
             logger.debug("Internal webhook URL not configured, skipping notification")
             return False
@@ -155,12 +175,12 @@ class NotificationService:
             logger.error(f"Failed to send internal notification: {e}")
             return False
 
-    def _send_button_telegram_notification(
+    def _send_button_telegram_notification_sync(
         self,
         door_name: str,
         gpio_pin: int,
     ) -> bool:
-        """Send button press notification to Telegram."""
+        """Send button press notification to Telegram (blocking)."""
         if not self.telegram_bot_token or not self.telegram_chat_id:
             logger.debug("Telegram not configured, skipping notification")
             return False
