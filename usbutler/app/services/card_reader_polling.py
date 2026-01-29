@@ -1,6 +1,7 @@
 """Card reader polling service for background authentication."""
 
 import logging
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -118,9 +119,11 @@ class CardReaderPollingService:
             try:
                 self._poll_once()
             except Exception as e:
-                logger.error(f"Error in card reader polling: {e}")
-                # Brief pause after errors to avoid tight error loops
-                time.sleep(1.0)
+                # Exceptions that escape _poll_once (not caught inside)
+                # e.g., errors from wait_for_card() before the try block
+                logger.error(f"Unexpected error in card reader polling: {e}")
+                # Restart pcscd to recover from stuck reader state
+                self._restart_pcscd()
 
             time.sleep(self.poll_interval)
 
@@ -129,9 +132,13 @@ class CardReaderPollingService:
     def _poll_once(self) -> None:
         """Perform a single poll of the card reader."""
         # Wait for a card to be present
-        if not self._card_reader_service.wait_for_card(timeout=1):
+        card_detected = self._card_reader_service.wait_for_card(timeout=1)
+
+        if not card_detected:
             return
 
+        # Once a card is detected, always restart pcscd after processing
+        # to prevent phantom reads (even on errors)
         try:
             # Read card data
             scan_result = self._card_reader_service.read_card_data()
@@ -175,12 +182,16 @@ class CardReaderPollingService:
             # Process authentication
             self._process_authentication(identifier_value)
 
+        except Exception as e:
+            logger.error(f"Error reading card: {e}")
+            # Don't re-raise - we handle it in finally by restarting pcscd
+
         finally:
             # Disconnect from card
             self._card_reader_service.disconnect()
 
-            # Wait for card removal before next poll
-            self._card_reader_service.wait_for_card_removal(timeout=5)
+            # Restart pcscd to fully reset USB reader and prevent phantom reads
+            self._restart_pcscd()
 
     def _process_authentication(self, identifier_value: str) -> None:
         """Process authentication for a scanned identifier."""
@@ -207,6 +218,49 @@ class CardReaderPollingService:
                 logger.error(f"Default door {self.default_door_id} not found")
                 return
 
-            self._door_control_service.open_door(door, user.username)
+            self._door_control_service.open_door_for_card(door, user.username)
         finally:
             db.close()
+
+    def _restart_pcscd(self) -> None:
+        """Restart pcscd to fully reset USB reader state.
+
+        This is a nuclear option to prevent phantom reads by forcing
+        a complete re-initialization of the PC/SC subsystem.
+        """
+        try:
+            logger.info("Restarting pcscd to reset reader...")
+            # Try supervisorctl first (container environment)
+            result = subprocess.run(
+                ["supervisorctl", "restart", "pcscd"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                logger.info("pcscd restarted via supervisorctl")
+                # Give pcscd time to fully restart and detect the reader
+                time.sleep(2.0)
+                return
+
+            # Fallback: try systemctl (host environment)
+            result = subprocess.run(
+                ["systemctl", "restart", "pcscd"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                logger.info("pcscd restarted via systemctl")
+                time.sleep(2.0)
+                return
+
+            # Last resort: kill and let supervisor restart
+            subprocess.run(["pkill", "-9", "pcscd"], timeout=5)
+            logger.info("pcscd killed, waiting for restart...")
+            time.sleep(3.0)
+
+        except subprocess.TimeoutExpired:
+            logger.warning("pcscd restart timed out")
+        except Exception as e:
+            logger.error(f"Failed to restart pcscd: {e}")

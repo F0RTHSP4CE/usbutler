@@ -54,6 +54,7 @@
     <br>
     <table>
         <tr>
+            <th>ID</th>
             <th>Username</th>
             <th>Status</th>
             <th>Identifiers</th>
@@ -61,6 +62,7 @@
         </tr>
         {% for user in users %}
         <tr>
+            <td>{{ user.id }}</td>
             <td>{{ user.username }}</td>
             <td>
                 <select onchange="updateStatus({{ user.id }}, this.value)">
@@ -80,7 +82,7 @@
         </tr>
         {% else %}
         <tr>
-            <td colspan="4">No users</td>
+            <td colspan="5">No users</td>
         </tr>
         {% endfor %}
     </table>

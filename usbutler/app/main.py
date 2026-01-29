@@ -6,14 +6,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.config import settings
-from app.database import init_db
-from app.dependencies import set_card_reader_polling
+from app.database import init_db, get_db
+from app.dependencies import set_card_reader_polling, get_door_control_service
 from app.emv.nfc_reader import NFCReader
 from app.routers import doors_router, identifiers_router, users_router, ui_router
 from app.services.card_reader import CardReaderService
 from app.services.card_reader_polling import CardReaderPollingService
-from app.services.door_control_service import DoorControlService
-from app.services.notification_service import NotificationService
+from app.services.door_service import DoorService
 
 # Configure logging
 logging.basicConfig(
@@ -25,8 +24,7 @@ logger = logging.getLogger(__name__)
 # Singletons
 nfc_reader = NFCReader()
 card_reader_service = CardReaderService(nfc_reader)
-notification_service = NotificationService()
-door_control_service = DoorControlService(notification_service)
+door_control_service = get_door_control_service()  # Use the singleton from dependencies
 card_reader_polling: CardReaderPollingService | None = None
 
 
@@ -41,6 +39,19 @@ async def lifespan(app: FastAPI):
     # Initialize database
     init_db()
     logger.info("Database initialized")
+
+    # Start button monitoring for all configured doors
+    db = next(get_db())
+    try:
+        door_service = DoorService(db)
+        doors = door_service.get_all()
+        if doors:
+            door_control_service.start_button_monitoring(doors)
+            logger.info(f"Button monitoring started for {len(doors)} doors")
+        else:
+            logger.info("No doors configured, button monitoring not started")
+    finally:
+        db.close()
 
     # Start card reader polling
     card_reader_polling = CardReaderPollingService(
@@ -57,6 +68,10 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down usbutler...")
+
+    # Stop button monitoring
+    door_control_service.stop_button_monitoring()
+    logger.info("Button monitoring stopped")
 
     if card_reader_polling:
         card_reader_polling.stop()

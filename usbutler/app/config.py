@@ -27,6 +27,12 @@ class Settings:
     )
     DEFAULT_DOOR_ID: int = int(os.getenv("DEFAULT_DOOR_ID", "1"))
 
+    # Button monitoring
+    BUTTON_MONITOR_ENABLED: bool = os.getenv(
+        "BUTTON_MONITOR_ENABLED", "true"
+    ).lower() in ("true", "1", "yes")
+    BUTTON_DEBOUNCE_TIME: float = float(os.getenv("BUTTON_DEBOUNCE_TIME", "1"))
+
     # API Authentication (used for both API and UI)
     API_PASSWORD: str = os.getenv("API_PASSWORD", "")
 

@@ -59,6 +59,11 @@ _door_control_service = DoorControlService(_notification_service)
 _card_reader_polling = None
 
 
+def get_door_control_service() -> DoorControlService:
+    """Get the singleton door control service."""
+    return _door_control_service
+
+
 def set_card_reader_polling(service) -> None:
     """Set the card reader polling service (called at startup)."""
     global _card_reader_polling

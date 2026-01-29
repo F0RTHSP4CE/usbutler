@@ -3,6 +3,27 @@
 
 {% block content %}
 <div class="section">
+    <h2>Last Door Event</h2>
+    {% if last_event %}
+    <p>
+        <strong>{{ last_event.door_name }}</strong>
+        {% if last_event.event_type == "button" %}
+        — opened via <strong>🔘 button</strong>
+        {% elif last_event.event_type == "card" %}
+        — opened via <strong>💳 card</strong>{% if last_event.username %} by <strong>{{ last_event.username
+            }}</strong>{% endif %}
+        {% else %}
+        — opened via <strong>🌐 API</strong>{% if last_event.username %} by <strong>{{ last_event.username }}</strong>{%
+        endif %}
+        {% endif %}
+        ({{ last_event.timestamp.strftime('%H:%M:%S') }})
+    </p>
+    {% else %}
+    <p>No door events yet.</p>
+    {% endif %}
+</div>
+
+<div class="section">
     <h2>Add Door</h2>
     <div class="form-row">
         <input type="text" id="doorName" placeholder="name">
@@ -20,6 +41,7 @@
     <h2>Doors</h2>
     <table>
         <tr>
+            <th>ID</th>
             <th>Name</th>
             <th>GPIO</th>
             <th>Hold</th>
@@ -27,6 +49,7 @@
         </tr>
         {% for door in doors %}
         <tr>
+            <td>{{ door.id }}</td>
             <td>{{ door.name }}</td>
             <td>{{ door.gpio_pin }}{% if door.gpio_active_low %} (low){% endif %}</td>
             <td>{{ door.open_hold_time }}s</td>
@@ -37,7 +60,7 @@
         </tr>
         {% else %}
         <tr>
-            <td colspan="4">No doors</td>
+            <td colspan="5">No doors</td>
         </tr>
         {% endfor %}
     </table>
@@ -62,6 +85,8 @@
         try {
             await api('POST', `/doors/${id}/open`, {});
             showAlert('Opening door...');
+            // Reload after a short delay to show the event
+            setTimeout(() => location.reload(), 1000);
         } catch (e) { showAlert(e.message, 'danger'); }
     }
 
@@ -72,5 +97,16 @@
             location.reload();
         } catch (e) { showAlert(e.message, 'danger'); }
     }
+
+    // Auto-refresh to check for new door events
+    setInterval(async () => {
+        try {
+            const event = await api('GET', '/doors/last-event');
+            const lastTimestamp = '{{ last_event.timestamp.isoformat() if last_event else "" }}';
+            if (event.timestamp && event.timestamp !== lastTimestamp) {
+                location.reload();
+            }
+        } catch (e) { }
+    }, 3000);
 </script>
 {% endblock %}

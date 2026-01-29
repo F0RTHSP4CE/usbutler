@@ -11,9 +11,25 @@ from app.schemas.door import (
     DoorOpenResponse,
     DoorResponse,
     DoorUpdate,
+    LastDoorEventResponse,
 )
 
 router = APIRouter(prefix="/doors", tags=["doors"])
+
+
+def _refresh_button_monitoring(s: ServicesDep) -> None:
+    """Refresh button monitoring with current doors list."""
+    doors = s.doors.get_all()
+    s.door_control.update_monitored_doors(doors)
+
+
+@router.get("/last-event", response_model=LastDoorEventResponse)
+def get_last_door_event(s: ServicesDep):
+    """Get the last door event (open via API, button, or card)."""
+    event = s.door_control.get_last_door_event()
+    if not event:
+        return LastDoorEventResponse()
+    return LastDoorEventResponse(**event)
 
 
 @router.get("", response_model=List[DoorResponse])
@@ -30,7 +46,9 @@ def create_door(door_data: DoorCreate, s: ServicesDep):
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Door with name '{door_data.name}' already exists",
         )
-    return s.doors.create(door_data)
+    door = s.doors.create(door_data)
+    _refresh_button_monitoring(s)
+    return door
 
 
 @router.get("/{door_id}", response_model=DoorResponse)
@@ -55,6 +73,7 @@ def update_door(door_id: int, door_data: DoorUpdate, s: ServicesDep):
                 detail=f"Door with name '{door_data.name}' already exists",
             )
     if door := s.doors.update(door_id, door_data):
+        _refresh_button_monitoring(s)
         return door
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
@@ -70,6 +89,7 @@ def delete_door(door_id: int, s: ServicesDep):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Door with id {door_id} not found",
         )
+    _refresh_button_monitoring(s)
 
 
 @router.post("/{door_id}/open", response_model=DoorOpenResponse)

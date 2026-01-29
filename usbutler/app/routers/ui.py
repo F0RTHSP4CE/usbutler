@@ -125,11 +125,14 @@ async def doors_page(
     if redirect := _require_auth(api_key):
         return redirect
 
+    last_event = s.door_control.get_last_door_event()
+
     return templates.TemplateResponse(
         "doors.html",
         {
             "request": request,
             "doors": s.doors.get_all(),
+            "last_event": last_event,
             "auth_enabled": bool(settings.API_PASSWORD),
         },
     )

@@ -1,8 +1,18 @@
 """Door schemas."""
 
+from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
+
+
+class DoorEventType(str, Enum):
+    """Type of door event."""
+
+    API = "api"
+    BUTTON = "button"
+    CARD = "card"
 
 
 class DoorBase(BaseModel):
@@ -51,3 +61,14 @@ class DoorOpenResponse(BaseModel):
     message: str
     door_id: int
     door_name: str
+
+
+class LastDoorEventResponse(BaseModel):
+    """Schema for last door event response."""
+
+    door_name: Optional[str] = None
+    door_id: Optional[int] = None
+    gpio_pin: Optional[int] = None
+    event_type: Optional[DoorEventType] = None
+    username: Optional[str] = None
+    timestamp: Optional[datetime] = None

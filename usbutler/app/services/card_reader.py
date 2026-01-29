@@ -402,7 +402,7 @@ class CardReaderService:
         self.nfc_reader = nfc_reader or NFCReader()
         # watchdog to detect stalls during EMV probing
         self._last_progress_time: Optional[float] = None
-        self._progress_timeout = 4.0
+        self._progress_timeout = 1.5  # Reduced for faster recovery on stalled reads
         self._use_acr122_proprietary = bool(use_acr122_proprietary)
 
     def _ensure_connection(self, timeout: int = 3) -> bool:
