@@ -4,6 +4,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Callable, Dict, Generator, List, Optional
 
@@ -176,23 +177,29 @@ class DoorControlService:
                         direction=Direction.INPUT,
                         bias=Bias.PULL_UP,
                         edge_detection=Edge.FALLING,
+                        debounce_period=timedelta(milliseconds=50),
                     )
                     for pin in pins
                 }
 
                 with gpiod.request_lines(
-                    "/dev/gpiochip0", consumer="usbutler", config=config
+                    "/dev/gpiochip0", consumer="usbutler-btn", config=config
                 ) as req:
                     for pin in pins:
                         if ev := self._pin_released.get(pin):
                             ev.clear()
 
+                    logger.debug(
+                        f"Button monitoring active for pins: {list(pins.keys())}"
+                    )
+
                     while not self._stop_event.is_set():
                         if any(self._pin_in_output.get(p) for p in pins):
                             break
 
-                        if req.wait_edge_events(timeout=0.5):
-                            for event in req.read_edge_events():
+                        if req.wait_edge_events(timeout=timedelta(milliseconds=500)):
+                            events = req.read_edge_events()
+                            for event in events:
                                 pin = event.line_offset
                                 door = pins.get(pin)
                                 if not door or self._pin_in_output.get(pin):
