@@ -127,12 +127,28 @@ async def doors_page(
 
     last_event = s.door_control.get_last_door_event()
 
+    # Get recent door events for history (last 20)
+    events, _ = s.door_events.get_history(page=1, page_size=20)
+    history = []
+    for event in events:
+        door = s.doors.get_by_id(event.door_id)
+        history.append(
+            {
+                "id": event.id,
+                "door_name": door.name if door else f"Door #{event.door_id}",
+                "event_type": event.event_type.value,
+                "username": event.username,
+                "timestamp": event.timestamp,
+            }
+        )
+
     return templates.TemplateResponse(
         "doors.html",
         {
             "request": request,
             "doors": s.doors.get_all(),
             "last_event": last_event,
+            "history": history,
             "auth_enabled": bool(settings.API_PASSWORD),
         },
     )

@@ -14,6 +14,8 @@ from app.schemas.door import (
     DoorResponse,
     DoorOpenRequest,
     DoorOpenResponse,
+    DoorEventResponse,
+    DoorEventListResponse,
 )
 from app.schemas.identifier import (
     IdentifierBase,
@@ -36,6 +38,8 @@ __all__ = [
     "DoorResponse",
     "DoorOpenRequest",
     "DoorOpenResponse",
+    "DoorEventResponse",
+    "DoorEventListResponse",
     "IdentifierBase",
     "IdentifierCreate",
     "IdentifierUpdate",

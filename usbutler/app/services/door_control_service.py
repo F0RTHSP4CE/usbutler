@@ -7,25 +7,17 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
 from typing import Dict, List, Optional
 
 from app.config import settings
 from app.models.door import Door
+from app.models.door_event import DoorEventType
 from app.services.notification_service import NotificationService
 
 logger = logging.getLogger(__name__)
 
 # Thread pool for non-blocking door operations
 _door_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="door_control_")
-
-
-class DoorEventType(str, Enum):
-    """Type of door event."""
-
-    API = "api"
-    BUTTON = "button"
-    CARD = "card"
 
 
 @dataclass
@@ -64,6 +56,26 @@ class DoorControlService:
         # Last door event tracking
         self._last_door_event: Optional[LastDoorEvent] = None
         self._last_door_event_lock = threading.Lock()
+
+    def _persist_door_event(
+        self,
+        door_id: int,
+        event_type: DoorEventType,
+        username: Optional[str] = None,
+    ) -> None:
+        """Persist a door event to the database."""
+        # Import here to avoid circular import
+        from app.dependencies import create_services_for_thread
+
+        try:
+            with create_services_for_thread() as services:
+                services.door_events.create(
+                    door_id=door_id,
+                    event_type=event_type,
+                    username=username,
+                )
+        except Exception as e:
+            logger.error(f"Failed to persist door event: {e}")
 
     def get_last_door_event(self) -> Optional[dict]:
         """Get the last door event information."""
@@ -270,8 +282,15 @@ class DoorControlService:
                                         f"Button press detected on GPIO {gpio_pin} "
                                         f"for door '{door.name}'"
                                     )
-                                    # Record the event
+                                    # Record the event (in-memory)
                                     self._record_door_event(door, DoorEventType.BUTTON)
+                                    # Persist to database
+                                    _door_executor.submit(
+                                        self._persist_door_event,
+                                        door.id,
+                                        DoorEventType.BUTTON,
+                                        None,
+                                    )
                                     # Send notification in a separate thread
                                     _door_executor.submit(
                                         self.notification_service.notify_button_pressed,

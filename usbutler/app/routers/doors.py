@@ -1,12 +1,16 @@
 """Doors API router."""
 
-from typing import List
+import math
+from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.dependencies import ServicesDep
+from app.models.door_event import DoorEventType
 from app.schemas.door import (
     DoorCreate,
+    DoorEventListResponse,
+    DoorEventResponse,
     DoorOpenRequest,
     DoorOpenResponse,
     DoorResponse,
@@ -30,6 +34,47 @@ def get_last_door_event(s: ServicesDep):
     if not event:
         return LastDoorEventResponse()
     return LastDoorEventResponse(**event)
+
+
+@router.get("/history", response_model=DoorEventListResponse)
+def get_door_history(
+    s: ServicesDep,
+    door_id: Optional[int] = Query(None, description="Filter by door ID"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+):
+    """Get door opening history with pagination."""
+    events, total = s.door_events.get_history(
+        door_id=door_id,
+        page=page,
+        page_size=page_size,
+    )
+
+    # Build response with door names
+    items = []
+    for event in events:
+        door = s.doors.get_by_id(event.door_id)
+        items.append(
+            DoorEventResponse(
+                id=event.id,
+                door_id=event.door_id,
+                door_name=door.name if door else f"Door #{event.door_id}",
+                user_id=event.user_id,
+                event_type=event.event_type,
+                username=event.username,
+                timestamp=event.timestamp,
+            )
+        )
+
+    total_pages = math.ceil(total / page_size) if total > 0 else 1
+
+    return DoorEventListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
 
 
 @router.get("", response_model=List[DoorResponse])
@@ -108,11 +153,21 @@ def open_door(door_id: int, request: DoorOpenRequest, s: ServicesDep):
         )
 
     username = None
+    user_id = None
     if request.user_id:
         if user := s.users.get_by_id(request.user_id):
             username = user.username
+            user_id = user.id
     elif request.username:
         username = request.username
+
+    # Record the event in the database
+    s.door_events.create(
+        door_id=door.id,
+        event_type=DoorEventType.API,
+        user_id=user_id,
+        username=username,
+    )
 
     s.door_control.open_door(door, username)
 

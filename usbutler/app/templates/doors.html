@@ -65,6 +65,34 @@
         {% endfor %}
     </table>
 </div>
+
+<div class="section">
+    <h2>Door Opening History</h2>
+    <table>
+        <tr>
+            <th>Time</th>
+            <th>Door</th>
+            <th>Method</th>
+            <th>User</th>
+        </tr>
+        {% for event in history %}
+        <tr>
+            <td>{{ event.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td>{{ event.door_name }}</td>
+            <td>
+                {% if event.event_type == "button" %}🔘 button
+                {% elif event.event_type == "card" %}💳 card
+                {% else %}🌐 API{% endif %}
+            </td>
+            <td>{{ event.username or "—" }}</td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="4">No history yet</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
 {% endblock %}
 
 {% block scripts %}

@@ -72,3 +72,27 @@ class LastDoorEventResponse(BaseModel):
     event_type: Optional[DoorEventType] = None
     username: Optional[str] = None
     timestamp: Optional[datetime] = None
+
+
+class DoorEventResponse(BaseModel):
+    """Schema for door event history response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    door_id: int
+    door_name: str
+    user_id: Optional[int] = None
+    event_type: DoorEventType
+    username: Optional[str] = None
+    timestamp: datetime
+
+
+class DoorEventListResponse(BaseModel):
+    """Schema for paginated door event list response."""
+
+    items: list[DoorEventResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

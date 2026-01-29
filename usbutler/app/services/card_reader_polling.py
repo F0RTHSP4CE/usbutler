@@ -8,17 +8,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Optional
 
-from sqlalchemy.orm import Session
-
-from app.database import SessionLocal
 from app.emv.nfc_reader import NFCReader
+from app.models.door_event import DoorEventType
 from app.models.identifier import IdentifierType
 from app.services.auth_service import AuthService
 from app.services.card_reader import CardReaderService, CardScanResult
 from app.services.door_control_service import DoorControlService
-from app.services.door_service import DoorService
-from app.services.identifier_service import IdentifierService
-from app.services.user_service import UserService
 
 logger = logging.getLogger(__name__)
 
@@ -195,13 +190,12 @@ class CardReaderPollingService:
 
     def _process_authentication(self, identifier_value: str) -> None:
         """Process authentication for a scanned identifier."""
-        # DB session per operation (thread safety)
-        db = SessionLocal()
-        try:
-            users = UserService(db)
-            identifiers = IdentifierService(db)
-            doors = DoorService(db)
-            auth = AuthService(users, identifiers)
+        # Import here to avoid circular import
+        from app.dependencies import create_services_for_thread
+
+        # Create services with their own DB session for thread safety
+        with create_services_for_thread() as services:
+            auth = AuthService(services.users, services.identifiers)
 
             success, user, _, message = auth.authenticate_by_identifier(
                 identifier_value
@@ -213,14 +207,20 @@ class CardReaderPollingService:
 
             logger.info(f"Authentication successful for user '{user.username}'")
 
-            door = doors.get_by_id(self.default_door_id)
+            door = services.doors.get_by_id(self.default_door_id)
             if not door:
                 logger.error(f"Default door {self.default_door_id} not found")
                 return
 
+            # Record the event in database
+            services.door_events.create(
+                door_id=door.id,
+                event_type=DoorEventType.CARD,
+                user_id=user.id,
+                username=user.username,
+            )
+
             self._door_control_service.open_door_for_card(door, user.username)
-        finally:
-            db.close()
 
     def _restart_pcscd(self) -> None:
         """Restart pcscd to fully reset USB reader state.

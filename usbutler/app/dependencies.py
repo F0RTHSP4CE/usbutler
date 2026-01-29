@@ -1,8 +1,9 @@
 """Dependency injection providers for FastAPI."""
 
 import secrets
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Annotated, Optional
+from typing import Annotated, Generator, Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyHeader
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.services.door_control_service import DoorControlService
+from app.services.door_event_service import DoorEventService
 from app.services.door_service import DoorService
 from app.services.identifier_service import IdentifierService
 from app.services.notification_service import NotificationService
@@ -77,6 +79,7 @@ class Services:
     db: Session
     users: UserService
     doors: DoorService
+    door_events: DoorEventService
     identifiers: IdentifierService
     door_control: DoorControlService
     card_reader_polling: Optional[object] = None
@@ -88,10 +91,39 @@ def _create_services(db: Session) -> Services:
         db=db,
         users=UserService(db),
         doors=DoorService(db),
+        door_events=DoorEventService(db),
         identifiers=IdentifierService(db),
         door_control=_door_control_service,
         card_reader_polling=_card_reader_polling,
     )
+
+
+@contextmanager
+def create_services_for_thread() -> Generator[Services, None, None]:
+    """Create services for use in background threads.
+
+    Background threads cannot use FastAPI's request-scoped dependency injection,
+    so they need to create their own database sessions and services.
+
+    Usage:
+        with create_services_for_thread() as services:
+            services.doors.get_all()
+    """
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        yield Services(
+            db=db,
+            users=UserService(db),
+            doors=DoorService(db),
+            door_events=DoorEventService(db),
+            identifiers=IdentifierService(db),
+            door_control=_door_control_service,
+            card_reader_polling=_card_reader_polling,
+        )
+    finally:
+        db.close()
 
 
 def get_services(db: DbSession, _auth: ApiKeyAuth) -> Services:

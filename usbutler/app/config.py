@@ -31,7 +31,7 @@ class Settings:
     BUTTON_MONITOR_ENABLED: bool = os.getenv(
         "BUTTON_MONITOR_ENABLED", "true"
     ).lower() in ("true", "1", "yes")
-    BUTTON_DEBOUNCE_TIME: float = float(os.getenv("BUTTON_DEBOUNCE_TIME", "1"))
+    BUTTON_DEBOUNCE_TIME: float = float(os.getenv("BUTTON_DEBOUNCE_TIME", "3"))
 
     # API Authentication (used for both API and UI)
     API_PASSWORD: str = os.getenv("API_PASSWORD", "")

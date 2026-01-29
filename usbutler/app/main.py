@@ -6,13 +6,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.config import settings
-from app.database import init_db, get_db
-from app.dependencies import set_card_reader_polling, get_door_control_service
+from app.database import init_db
+from app.dependencies import (
+    set_card_reader_polling,
+    get_door_control_service,
+    create_services_for_thread,
+)
 from app.emv.nfc_reader import NFCReader
 from app.routers import doors_router, identifiers_router, users_router, ui_router
 from app.services.card_reader import CardReaderService
 from app.services.card_reader_polling import CardReaderPollingService
-from app.services.door_service import DoorService
 
 # Configure logging
 logging.basicConfig(
@@ -41,17 +44,13 @@ async def lifespan(app: FastAPI):
     logger.info("Database initialized")
 
     # Start button monitoring for all configured doors
-    db = next(get_db())
-    try:
-        door_service = DoorService(db)
-        doors = door_service.get_all()
+    with create_services_for_thread() as services:
+        doors = services.doors.get_all()
         if doors:
             door_control_service.start_button_monitoring(doors)
             logger.info(f"Button monitoring started for {len(doors)} doors")
         else:
             logger.info("No doors configured, button monitoring not started")
-    finally:
-        db.close()
 
     # Start card reader polling
     card_reader_polling = CardReaderPollingService(
