@@ -7,6 +7,7 @@ from sqlalchemy import String, Enum, ForeignKey, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.utils.masking import mask_identifier
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -35,4 +36,4 @@ class Identifier(Base):
     user: Mapped[Optional["User"]] = relationship("User", back_populates="identifiers")
 
     def __repr__(self) -> str:
-        return f"<Identifier(id={self.id}, value={self.value}, type={self.type})>"
+        return f"<Identifier(id={self.id}, value={mask_identifier(self.value)}, type={self.type})>"

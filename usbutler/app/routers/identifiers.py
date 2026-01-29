@@ -12,6 +12,7 @@ from app.schemas.identifier import (
     IdentifierWithUser,
     LastScanResponse,
 )
+from app.utils.masking import mask_identifier
 
 router = APIRouter(prefix="/identifiers", tags=["identifiers"])
 
@@ -28,7 +29,7 @@ def create_identifier(identifier_data: IdentifierCreate, s: ServicesDep):
     if s.identifiers.get_by_value(identifier_data.value):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Identifier with value '{identifier_data.value}' already exists",
+            detail=f"Identifier with value '{mask_identifier(identifier_data.value)}' already exists",
         )
     if identifier_data.user_id and not s.users.get_by_id(identifier_data.user_id):
         raise HTTPException(
@@ -82,7 +83,7 @@ def get_identifier_by_value(value: str, s: ServicesDep):
         return identifier
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Identifier with value '{value}' not found",
+        detail=f"Identifier with value '{mask_identifier(value)}' not found",
     )
 
 
@@ -96,7 +97,7 @@ def update_identifier(
         if existing and existing.id != identifier_id:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Identifier with value '{identifier_data.value}' already exists",
+                detail=f"Identifier with value '{mask_identifier(identifier_data.value)}' already exists",
             )
     if identifier_data.user_id is not None and identifier_data.user_id != 0:
         if not s.users.get_by_id(identifier_data.user_id):

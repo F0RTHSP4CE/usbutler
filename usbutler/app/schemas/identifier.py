@@ -3,9 +3,10 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
 
 from app.models.identifier import IdentifierType
+from app.utils.masking import mask_identifier
 
 
 class IdentifierBase(BaseModel):
@@ -13,6 +14,12 @@ class IdentifierBase(BaseModel):
 
     value: str
     type: IdentifierType
+
+    @computed_field
+    @property
+    def masked_value(self) -> str:
+        """Return masked version of the identifier value."""
+        return mask_identifier(self.value)
 
 
 class IdentifierCreate(IdentifierBase):
@@ -62,3 +69,9 @@ class LastScanResponse(BaseModel):
     scanned_at: Optional[datetime] = None
     user_id: Optional[int] = None
     username: Optional[str] = None
+
+    @computed_field
+    @property
+    def masked_value(self) -> str:
+        """Return masked version of the identifier value."""
+        return mask_identifier(self.value) if self.value else ""

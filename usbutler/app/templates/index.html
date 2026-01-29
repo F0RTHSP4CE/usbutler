@@ -1,12 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Users - USButler{% endblock %}
 
+{% macro mask_id(value) %}{{ value[:2] }}..{{ value[-2:] }}{% endmacro %}
+
 {% block content %}
 <div class="section">
     <h2>Last Scanned Card</h2>
     {% if last_scan %}
     <p>
-        <strong>{{ last_scan.type.value }}</strong>: <code>{{ last_scan.value }}</code>
+        <strong>{{ last_scan.type.value }}</strong>: <code>{{ mask_id(last_scan.value) }}</code>
         ({{ last_scan.scanned_at.strftime('%H:%M:%S') }})
         {% if last_scan_identifier and last_scan_identifier.user %}
         — assigned to <strong>{{ last_scan_identifier.user.username }}</strong>
@@ -72,7 +74,7 @@
             </td>
             <td>
                 {% for ident in user.identifiers %}
-                {{ ident.type.value }}:{{ ident.value[:12] }}{% if ident.value|length > 12 %}...{% endif %}
+                {{ ident.type.value }}:{{ mask_id(ident.value) }}
                 <button onclick="deleteIdentifier({{ ident.id }})">[x]</button>
                 {% else %}
                 -

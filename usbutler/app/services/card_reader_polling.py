@@ -13,6 +13,7 @@ from app.models.identifier import IdentifierType
 from app.services.auth_service import AuthService
 from app.services.card_reader import CardReaderService, CardScanResult
 from app.services.door_control_service import DoorControlService
+from app.utils.masking import mask_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -161,13 +162,17 @@ class CardReaderPollingService:
                 identifier_value == self._last_processed_identifier
                 and (current_time - self._last_processed_time) < self._debounce_seconds
             ):
-                logger.debug(f"Debouncing identifier {identifier_value}")
+                logger.debug(
+                    f"Debouncing identifier {mask_identifier(identifier_value)}"
+                )
                 return
 
             self._last_processed_identifier = identifier_value
             self._last_processed_time = current_time
 
-            logger.info(f"Card scanned: {identifier_type.value}={identifier_value}")
+            logger.info(
+                f"Card scanned: {identifier_type.value}={mask_identifier(identifier_value)}"
+            )
 
             # Call optional callback
             if self.on_scan_callback:
@@ -199,7 +204,9 @@ class CardReaderPollingService:
             )
 
             if not success or user is None:
-                logger.info(f"Authentication failed for {identifier_value}: {message}")
+                logger.info(
+                    f"Authentication failed for {mask_identifier(identifier_value)}: {message}"
+                )
                 return
 
             logger.info(f"Authentication successful for user '{user.username}'")

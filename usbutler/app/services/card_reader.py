@@ -16,6 +16,7 @@ from smartcard.util import toHexString
 import time
 
 from app.emv.nfc_reader import NFCReader
+from app.utils.masking import mask_identifier
 
 ATR_MAP: Dict[str, str] = {
     "3B 8F 80 01 80 4F 0C A0 00 00 03 06 03 00 01": "Mifare Classic 1K",
@@ -568,7 +569,9 @@ class CardReaderService:
 
                     if v5a:
                         pan = toHexString(list(v5a)).replace(" ", "").rstrip("F")
-                        print(f"  Found 5A in SFI {sfi} rec {rec}: PAN={pan}")
+                        print(
+                            f"  Found 5A in SFI {sfi} rec {rec}: PAN={mask_identifier(pan)}"
+                        )
                     if v57 and not pan:
                         track2 = toHexString(list(v57)).replace(" ", "")
                         if "D" in track2:
@@ -576,10 +579,12 @@ class CardReaderService:
                             expiry = track2.split("D", 1)[1][:4]
                         elif "F" in track2:
                             pan = track2.split("F", 1)[0]
-                        print(f"  Found 57 in SFI {sfi} rec {rec}: track2={track2}")
+                        print(
+                            f"  Found 57 in SFI {sfi} rec {rec}: track2={mask_identifier(track2)}"
+                        )
                     if v5f24 and not expiry:
                         expiry = toHexString(list(v5f24)).replace(" ", "")
-                        print(f"  Found 5F24 expiry: {expiry}")
+                        print(f"  Found 5F24 expiry: {mask_identifier(expiry)}")
 
                     if pan:
                         break
