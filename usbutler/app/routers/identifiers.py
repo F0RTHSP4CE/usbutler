@@ -27,7 +27,7 @@ def create_identifier(identifier_data: IdentifierCreate, s: ServicesDep):
             status.HTTP_409_CONFLICT,
             f"Identifier '{mask_identifier(identifier_data.value)}' exists",
         )
-    if identifier_data.user_id and not s.users.get_by_id(identifier_data.user_id):
+    if not s.users.get_by_id(identifier_data.user_id):
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, f"User {identifier_data.user_id} not found"
         )

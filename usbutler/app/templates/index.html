@@ -45,6 +45,22 @@
     {% else %}
     <p>No card scanned yet.</p>
     {% endif %}
+
+    <hr>
+
+    <h3>Manual Card Add</h3>
+    <div class="form-row">
+        <select id="manualUserId">
+            <option value="">-- select user --</option>
+            {% for user in users %}
+            <option value="{{ user.id }}">{{ user.username }}</option>
+            {% endfor %}
+        </select>
+        <input type="text" id="manualUid" placeholder="UID">
+        <button onclick="addManualIdentifier('UID')">Add UID</button>
+        <input type="text" id="manualPan" placeholder="PAN">
+        <button onclick="addManualIdentifier('PAN')">Add PAN</button>
+    </div>
 </div>
 
 <div class="section">
@@ -153,6 +169,23 @@
         if (!userId) { showAlert('Select user', 'danger'); return; }
         try {
             await api('POST', `/identifiers/${identId}/assign/${userId}`);
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function addManualIdentifier(type) {
+        const userId = document.getElementById('manualUserId').value;
+        if (!userId) { showAlert('Select user', 'danger'); return; }
+        const value = type === 'UID'
+            ? document.getElementById('manualUid').value.trim()
+            : document.getElementById('manualPan').value.trim();
+        if (!value) { showAlert(`Enter ${type}`, 'danger'); return; }
+        try {
+            await api('POST', '/identifiers', {
+                value,
+                type,
+                user_id: parseInt(userId),
+            });
             location.reload();
         } catch (e) { showAlert(e.message, 'danger'); }
     }

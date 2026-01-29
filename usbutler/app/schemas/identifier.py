@@ -10,7 +10,7 @@ from app.utils.masking import mask_identifier
 class IdentifierCreate(BaseModel):
     value: str
     type: IdentifierType
-    user_id: Optional[int] = None
+    user_id: int
 
 
 class IdentifierUpdate(BaseModel):
