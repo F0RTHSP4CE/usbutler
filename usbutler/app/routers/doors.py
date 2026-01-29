@@ -85,16 +85,22 @@ def get_door(door_id: int, s: ServicesDep):
 
 @router.patch("/{door_id}", response_model=DoorResponse)
 def update_door(door_id: int, door_data: DoorUpdate, s: ServicesDep):
-    if door_data.name:
+    # Get the current door first
+    current_door = s.doors.get_by_id(door_id)
+    if not current_door:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Door {door_id} not found")
+
+    # Only check for name conflicts if the name is changing
+    if door_data.name and door_data.name != current_door.name:
         existing = s.doors.get_by_name(door_data.name)
-        if existing and existing.id != door_id:
+        if existing:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, f"Door '{door_data.name}' exists"
             )
-    if door := s.doors.update(door_id, door_data):
-        _refresh_monitoring(s)
-        return door
-    raise HTTPException(status.HTTP_404_NOT_FOUND, f"Door {door_id} not found")
+
+    door = s.doors.update(door_id, door_data)
+    _refresh_monitoring(s)
+    return door
 
 
 @router.delete("/{door_id}", status_code=status.HTTP_204_NO_CONTENT)
