@@ -84,12 +84,10 @@ class NFCReader:
         return False
 
     def wait_for_card(self, timeout: int = 30) -> bool:
-        print("Waiting for card...")
         start = time.monotonic()
         while True:
             elapsed = time.monotonic() - start
             if elapsed >= timeout:
-                print("Timeout waiting for card")
                 return False
             remaining = timeout - elapsed
             try:
