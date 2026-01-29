@@ -156,12 +156,15 @@ class DoorControlService:
 
     def _monitor_loop(self) -> None:
         if not self._gpio_available:
+            logger.warning("GPIO not available, button monitoring disabled")
             while not self._stop_event.is_set():
                 self._stop_event.wait(timeout=1.0)
             return
 
         import gpiod
         from gpiod.line import Direction, Bias, Edge
+
+        logger.info("Button monitor thread started")
 
         while not self._stop_event.is_set():
             pins = {
@@ -182,6 +185,9 @@ class DoorControlService:
                     for pin in pins
                 }
 
+                logger.info(
+                    f"Requesting GPIO lines for button monitoring: {list(pins.keys())}"
+                )
                 with gpiod.request_lines(
                     "/dev/gpiochip0", consumer="usbutler-btn", config=config
                 ) as req:
@@ -189,12 +195,24 @@ class DoorControlService:
                         if ev := self._pin_released.get(pin):
                             ev.clear()
 
-                    logger.debug(
+                    logger.info(
                         f"Button monitoring active for pins: {list(pins.keys())}"
                     )
 
                     while not self._stop_event.is_set():
+                        # Break if any monitored pin needs output mode
                         if any(self._pin_in_output.get(p) for p in pins):
+                            logger.debug("Releasing GPIO lines for door output")
+                            break
+
+                        # Break if there are pins that should be monitored but aren't
+                        available_pins = {
+                            p
+                            for p, d in self._doors.items()
+                            if not self._pin_in_output.get(p)
+                        }
+                        if available_pins != set(pins.keys()):
+                            logger.debug("Pin set changed, re-requesting GPIO lines")
                             break
 
                         if req.wait_edge_events(timeout=timedelta(milliseconds=500)):
