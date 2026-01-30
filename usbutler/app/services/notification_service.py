@@ -18,20 +18,40 @@ class NotificationService:
     def __init__(self):
         self.bot_token = settings.TELEGRAM_BOT_TOKEN
         self.chat_id = settings.TELEGRAM_CHAT_ID
+        self.chat_topic_id = settings.TELEGRAM_CHAT_TOPIC_ID
 
     def _send_telegram(self, message: str) -> bool:
         if not self.bot_token or not self.chat_id:
+            logger.warning(
+                "Telegram notification skipped: missing bot token or chat id"
+            )
             return False
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+            payload = {
+                "chat_id": self.chat_id,
+                "text": message,
+                "parse_mode": "Markdown",
+                **(
+                    {"message_thread_id": self.chat_topic_id}
+                    if self.chat_topic_id is not None
+                    else {}
+                ),
+            }
+            logger.debug(
+                "Sending Telegram notification chat_id=%s thread_id=%s",
+                self.chat_id,
+                self.chat_topic_id,
+            )
             response = requests.post(
                 url,
-                json={
-                    "chat_id": self.chat_id,
-                    "text": message,
-                    "parse_mode": "Markdown",
-                },
+                json=payload,
                 timeout=10,
+            )
+            logger.debug(
+                "Telegram response status=%s body=%s",
+                response.status_code,
+                response.text,
             )
             response.raise_for_status()
             return True

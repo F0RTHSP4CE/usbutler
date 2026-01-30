@@ -15,6 +15,7 @@ class Settings:
 
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+    TELEGRAM_CHAT_TOPIC_ID = os.getenv("TELEGRAM_CHAT_TOPIC_ID")
 
     CARD_READER_POLL_INTERVAL = float(os.getenv("CARD_READER_POLL_INTERVAL", "1"))
     DEFAULT_DOOR_ID = int(os.getenv("DEFAULT_DOOR_ID", "1"))
