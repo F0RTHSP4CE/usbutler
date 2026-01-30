@@ -2,7 +2,7 @@ services:
   usbutler:
     build: usbutler
     container_name: usbutler
-    restart: unless-stopped
+    restart: always
     privileged: true
     devices:
       - /dev/bus/usb:/dev/bus/usb
