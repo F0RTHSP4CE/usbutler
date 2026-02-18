@@ -2,7 +2,7 @@
 
 import enum
 from typing import TYPE_CHECKING, Optional
-from sqlalchemy import String, Enum, ForeignKey, Integer
+from sqlalchemy import String, Enum, ForeignKey, Integer, Index, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -25,3 +25,7 @@ class Identifier(Base):
         Integer, ForeignKey("users.id"), nullable=True
     )
     user: Mapped[Optional["User"]] = relationship("User", back_populates="identifiers")
+
+    __table_args__ = (
+        Index("uq_identifiers_value_lower", func.lower(value), unique=True),
+    )

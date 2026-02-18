@@ -1,7 +1,7 @@
 """Identifier service for database operations."""
 
 from typing import List, Optional
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.identifier import Identifier
@@ -33,7 +33,7 @@ class IdentifierService:
         stmt = (
             select(Identifier)
             .options(selectinload(Identifier.user))
-            .where(Identifier.value == value)
+            .where(func.lower(Identifier.value) == value.lower())
         )
         return self.db.scalars(stmt).first()
 

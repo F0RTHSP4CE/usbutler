@@ -22,6 +22,10 @@ class IdentifierBrief(BaseModel):
     type: str
 
 
+class IdentifierLookupRequest(BaseModel):
+    value: str
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int

@@ -7,7 +7,13 @@ from app.config import settings
 from app.database import init_db
 from app.dependencies import create_services_for_thread, get_registry
 from app.emv.nfc_reader import NFCReader
-from app.routers import doors_router, identifiers_router, users_router, ui_router
+from app.routers import (
+    doors_router,
+    identifiers_router,
+    public_router,
+    users_router,
+    ui_router,
+)
 from app.services.card_reader import CardReaderService
 from app.services.card_reader_polling import CardReaderPollingService
 
@@ -57,6 +63,7 @@ app = FastAPI(title="USButler", version="2.0.0", lifespan=lifespan)
 app.include_router(users_router, prefix="/api")
 app.include_router(doors_router, prefix="/api")
 app.include_router(identifiers_router, prefix="/api")
+app.include_router(public_router, prefix="/api")
 app.include_router(ui_router)
 
 
