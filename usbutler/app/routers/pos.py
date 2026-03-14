@@ -10,7 +10,7 @@ router = APIRouter(prefix="/pos", tags=["pos"])
 
 @router.post("/users/by-identifier", response_model=UserResponse)
 def get_user_by_identifier(payload: IdentifierLookupRequest, s: ServicesDepPOS):
-    """Look up a user by identifier value. Requires X-POS-Password header."""
+    """Look up a user by identifier value. Requires X-POS-Secret header."""
     identifier = s.identifiers.get_by_value(payload.value)
     if not identifier or not identifier.user:
         raise HTTPException(

@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ["ADMIN_PASSWORD"] = "test_admin_pw"
-os.environ["POS_PASSWORD"] = "test_pos_pw"
+os.environ["POS_SECRET"] = "test_pos_pw"
 
 import pytest
 from fastapi import FastAPI, APIRouter
@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base
 from app.dependencies import (
     ApiKeyAuth,
-    PosPasswordAuth,
+    PosSecretAuth,
     get_db,
 )
 from app.models.user import User
@@ -52,7 +52,7 @@ def app_and_db():
         return {"ok": True}
 
     @router.get("/pos-protected")
-    def pos_protected(auth: PosPasswordAuth):
+    def pos_protected(auth: PosSecretAuth):
         return {"ok": True}
 
     app = FastAPI()
@@ -162,20 +162,20 @@ class TestApiKeyAuth:
         assert r.status_code == 401
 
 
-class TestPosPasswordAuth:
-    def test_correct_pos_password(self, app_and_db):
+class TestPosSecretAuth:
+    def test_correct_pos_secret(self, app_and_db):
         app, _ = app_and_db
         client = TestClient(app)
-        r = client.get("/pos-protected", headers={"X-POS-Password": "test_pos_pw"})
+        r = client.get("/pos-protected", headers={"X-POS-Secret": "test_pos_pw"})
         assert r.status_code == 200
 
-    def test_wrong_pos_password(self, app_and_db):
+    def test_wrong_pos_secret(self, app_and_db):
         app, _ = app_and_db
         client = TestClient(app)
-        r = client.get("/pos-protected", headers={"X-POS-Password": "wrong"})
+        r = client.get("/pos-protected", headers={"X-POS-Secret": "wrong"})
         assert r.status_code == 401
 
-    def test_missing_pos_password(self, app_and_db):
+    def test_missing_pos_secret(self, app_and_db):
         app, _ = app_and_db
         client = TestClient(app)
         r = client.get("/pos-protected")

@@ -23,9 +23,9 @@ api_key_header = APIKeyHeader(
     name="X-API-Key", scheme_name="ApiKey", auto_error=False,
     description="User API token (ubt_...) or admin password",
 )
-pos_password_header = APIKeyHeader(
-    name="X-POS-Password", scheme_name="PosPassword", auto_error=False,
-    description="POS endpoint password",
+pos_secret_header = APIKeyHeader(
+    name="X-POS-Secret", scheme_name="PosSecret", auto_error=False,
+    description="POS endpoint secret",
 )
 
 
@@ -124,28 +124,28 @@ def verify_api_key(
     )
 
 
-def verify_pos_password(
+def verify_pos_secret(
     request: Request,
-    pos_password: Annotated[str | None, Depends(pos_password_header)],
+    pos_secret: Annotated[str | None, Depends(pos_secret_header)],
 ) -> bool:
-    """Authenticate with POS password for restricted public endpoints."""
-    if not settings.POS_PASSWORD:
+    """Authenticate with POS secret for restricted public endpoints."""
+    if not settings.POS_SECRET:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="POS password not configured",
+            detail="POS secret not configured",
         )
-    if not pos_password or not secrets.compare_digest(
-        pos_password, settings.POS_PASSWORD
+    if not pos_secret or not secrets.compare_digest(
+        pos_secret, settings.POS_SECRET
     ):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid POS password"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid POS secret"
         )
     return True
 
 
 ApiKeyAuth = Annotated[Optional["User"], Depends(verify_api_key)]
 CallerUser = ApiKeyAuth
-PosPasswordAuth = Annotated[bool, Depends(verify_pos_password)]
+PosSecretAuth = Annotated[bool, Depends(verify_pos_secret)]
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -248,8 +248,8 @@ def get_caller(caller: CallerUser) -> Optional["User"]:
     return caller
 
 
-def get_services_pos(db: DbSession, _auth: PosPasswordAuth) -> Services:
-    """Get services with POS password authentication."""
+def get_services_pos(db: DbSession, _auth: PosSecretAuth) -> Services:
+    """Get services with POS secret authentication."""
     return _create_services(db)
 
 

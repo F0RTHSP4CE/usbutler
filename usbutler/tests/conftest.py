@@ -4,7 +4,7 @@ import os
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["ADMIN_PASSWORD"] = "test_admin_pw"
-os.environ["POS_PASSWORD"] = "test_pos_pw"
+os.environ["POS_SECRET"] = "test_pos_pw"
 
 import pytest
 from sqlalchemy import create_engine
