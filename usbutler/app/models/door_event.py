@@ -30,6 +30,7 @@ class DoorEvent(Base):
     )
     event_type: Mapped[DoorEventType] = mapped_column(Enum(DoorEventType))
     username: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    on_behalf_of: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, index=True
     )

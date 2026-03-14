@@ -31,8 +31,7 @@ class DoorResponse(BaseModel):
 
 
 class DoorOpenRequest(BaseModel):
-    user_id: Optional[int] = None
-    username: Optional[str] = None
+    on_behalf_of: Optional[str] = None
 
 
 class DoorOpenResponse(BaseModel):
@@ -48,6 +47,7 @@ class LastDoorEventResponse(BaseModel):
     gpio_pin: Optional[int] = None
     event_type: Optional[DoorEventType] = None
     username: Optional[str] = None
+    on_behalf_of: Optional[str] = None
     timestamp: Optional[datetime] = None
 
 
@@ -59,6 +59,7 @@ class DoorEventResponse(BaseModel):
     user_id: Optional[int] = None
     event_type: DoorEventType
     username: Optional[str] = None
+    on_behalf_of: Optional[str] = None
     timestamp: datetime
 
 

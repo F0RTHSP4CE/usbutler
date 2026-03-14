@@ -10,7 +10,7 @@ from app.emv.nfc_reader import NFCReader
 from app.routers import (
     doors_router,
     identifiers_router,
-    public_router,
+    pos_router,
     users_router,
     ui_router,
 )
@@ -59,11 +59,16 @@ async def lifespan(app: FastAPI):
         registry.card_reader_polling.stop()
 
 
-app = FastAPI(title="USButler", version="2.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="USButler",
+    version="2.0.0",
+    lifespan=lifespan,
+    swagger_ui_parameters={"persistAuthorization": True},
+)
 app.include_router(users_router, prefix="/api")
 app.include_router(doors_router, prefix="/api")
 app.include_router(identifiers_router, prefix="/api")
-app.include_router(public_router, prefix="/api")
+app.include_router(pos_router, prefix="/api")
 app.include_router(ui_router)
 
 

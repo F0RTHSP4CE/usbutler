@@ -37,19 +37,42 @@ class UserService:
         )
         return self.db.scalars(stmt).first()
 
-    def create(self, data: UserCreate) -> User:
-        user = User(username=data.username, status=data.status)
+    def create(
+        self, data: UserCreate, allowed_sources_csv: Optional[str] = None
+    ) -> User:
+        user = User(
+            username=data.username,
+            status=data.status,
+            api_allowed_sources=allowed_sources_csv,
+        )
         self.db.add(user)
         self.db.commit()
         self.db.refresh(user)
         return user
 
-    def update(self, user_id: int, data: UserUpdate) -> Optional[User]:
+    def update(
+        self,
+        user_id: int,
+        data: UserUpdate,
+        allowed_sources_csv: Optional[str] = None,
+    ) -> Optional[User]:
         user = self.get_by_id(user_id)
         if not user:
             return None
-        for k, v in data.model_dump(exclude_unset=True).items():
+        update_data = data.model_dump(exclude_unset=True, exclude={"allowed_sources"})
+        for k, v in update_data.items():
             setattr(user, k, v)
+        if data.allowed_sources is not None:
+            user.api_allowed_sources = allowed_sources_csv
+        self.db.commit()
+        self.db.refresh(user)
+        return user
+
+    def set_token_hash(self, user_id: int, token_hash: Optional[str]) -> Optional[User]:
+        user = self.get_by_id(user_id)
+        if not user:
+            return None
+        user.api_token_hash = token_hash
         self.db.commit()
         self.db.refresh(user)
         return user

@@ -13,29 +13,29 @@ templates = Jinja2Templates(directory="app/templates")
 
 
 def _is_auth(api_key: Optional[str]) -> bool:
-    if not settings.API_PASSWORD:
+    if not settings.ADMIN_PASSWORD:
         return True
     return bool(
         api_key
         and secrets.compare_digest(
-            api_key.encode("utf-8"), settings.API_PASSWORD.encode("utf-8")
+            api_key.encode("utf-8"), settings.ADMIN_PASSWORD.encode("utf-8")
         )
     )
 
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, api_key: Optional[str] = Cookie(None)):
-    if _is_auth(api_key) or not settings.API_PASSWORD:
+    if _is_auth(api_key) or not settings.ADMIN_PASSWORD:
         return RedirectResponse(url="/", status_code=302)
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
 
 @router.post("/login", response_class=HTMLResponse)
 async def login_submit(request: Request, password: str = Form(...)):
-    if not settings.API_PASSWORD:
+    if not settings.ADMIN_PASSWORD:
         return RedirectResponse(url="/", status_code=302)
     if secrets.compare_digest(
-        password.encode("utf-8"), settings.API_PASSWORD.encode("utf-8")
+        password.encode("utf-8"), settings.ADMIN_PASSWORD.encode("utf-8")
     ):
         response = RedirectResponse(url="/", status_code=302)
         response.set_cookie(
@@ -78,7 +78,7 @@ async def index(
             "users": s.users.get_all(),
             "last_scan": last_scan,
             "last_scan_identifier": last_scan_identifier,
-            "auth_enabled": bool(settings.API_PASSWORD),
+            "auth_enabled": bool(settings.ADMIN_PASSWORD),
         },
     )
 
@@ -100,6 +100,7 @@ async def doors_page(
                 "door_name": door.name if door else f"Door #{event.door_id}",
                 "event_type": event.event_type.value,
                 "username": event.username,
+                "on_behalf_of": event.on_behalf_of,
                 "timestamp": event.timestamp,
             }
         )
@@ -111,6 +112,6 @@ async def doors_page(
             "doors": s.doors.get_all(),
             "last_event": s.door_control.get_last_door_event(),
             "history": history,
-            "auth_enabled": bool(settings.API_PASSWORD),
+            "auth_enabled": bool(settings.ADMIN_PASSWORD),
         },
     )

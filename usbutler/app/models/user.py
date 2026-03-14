@@ -1,7 +1,7 @@
 """User model."""
 
 import enum
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
 from sqlalchemy import String, Enum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
@@ -22,6 +22,12 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     status: Mapped[UserStatus] = mapped_column(
         Enum(UserStatus), default=UserStatus.ACTIVE
+    )
+    api_token_hash: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, default=None
+    )
+    api_allowed_sources: Mapped[Optional[str]] = mapped_column(
+        String(500), nullable=True, default=None
     )
     identifiers: Mapped[List["Identifier"]] = relationship(
         "Identifier", back_populates="user", cascade="all, delete-orphan"

@@ -76,6 +76,8 @@
             <th>Username</th>
             <th>Status</th>
             <th>Identifiers</th>
+            <th>API Token</th>
+            <th>Allowed Sources</th>
             <th></th>
         </tr>
         {% for user in users %}
@@ -88,19 +90,38 @@
                     <option value="inactive" {% if user.status.value=='inactive' %}selected{% endif %}>inactive</option>
                 </select>
             </td>
-            <td>
+            <td class="wrap">
                 {% for ident in user.identifiers %}
-                {{ ident.type.value }}:{{ mask_id(ident.value) }}
-                <button onclick="deleteIdentifier({{ ident.id }})">[x]</button>
+                <span class="ident-item">{{ ident.type.value }}:{{ mask_id(ident.value) }} <button onclick="deleteIdentifier({{ ident.id }})">[x]</button></span>
                 {% else %}
                 -
                 {% endfor %}
+            </td>
+            <td>
+                <div class="inline-group" id="token-cell-{{ user.id }}">
+                    {% if user.api_token_hash %}
+                    <span class="token-indicator">&#x2713;</span>
+                    <button onclick="regenToken({{ user.id }})">regen</button>
+                    <button onclick="revokeToken({{ user.id }})">[x]</button>
+                    {% else %}
+                    <span class="no-token">none</span>
+                    <button onclick="regenToken({{ user.id }})">generate</button>
+                    {% endif %}
+                </div>
+            </td>
+            <td>
+                <div class="inline-group">
+                    <input class="cidr-input" id="cidr-{{ user.id }}"
+                           value="{{ user.api_allowed_sources or '' }}"
+                           placeholder="e.g. 10.0.0.0/24">
+                    <button onclick="saveCidr({{ user.id }})">save</button>
+                </div>
             </td>
             <td><button onclick="deleteUser({{ user.id }})">[delete]</button></td>
         </tr>
         {% else %}
         <tr>
-            <td colspan="5">No users</td>
+            <td colspan="7">No users</td>
         </tr>
         {% endfor %}
     </table>
@@ -170,6 +191,37 @@
         try {
             await api('POST', `/identifiers/${identId}/assign/${userId}`);
             location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function regenToken(userId) {
+        if (!confirm('Generate new API token? The old token will stop working.')) return;
+        try {
+            const res = await api('POST', `/users/${userId}/regenerate-token`);
+            const cell = document.getElementById(`token-cell-${userId}`);
+            cell.innerHTML = `<span class="token-indicator">&#x2713;</span> `
+                + `<div class="token-box" onclick="navigator.clipboard.writeText(this.textContent.trim()).then(()=>showAlert('Copied'))" title="Click to copy">${res.token}</div>`
+                + `<small>Shown once — copy now</small>`;
+            showAlert('Token generated');
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function revokeToken(userId) {
+        if (!confirm('Revoke API token? The user will lose API access.')) return;
+        try {
+            await api('PATCH', `/users/${userId}`, { allowed_sources: [] });
+            await api('POST', `/users/${userId}/revoke-token`);
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function saveCidr(userId) {
+        const input = document.getElementById(`cidr-${userId}`);
+        const raw = input.value.trim();
+        const sources = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+        try {
+            await api('PATCH', `/users/${userId}`, { allowed_sources: sources });
+            showAlert('Allowed sources saved');
         } catch (e) { showAlert(e.message, 'danger'); }
     }
 

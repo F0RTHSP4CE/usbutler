@@ -2,6 +2,7 @@
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from html import escape
 from typing import Optional
 
 import requests
@@ -31,7 +32,7 @@ class NotificationService:
             payload = {
                 "chat_id": self.chat_id,
                 "text": message,
-                "parse_mode": "Markdown",
+                "parse_mode": "HTML",
                 **(
                     {"message_thread_id": self.chat_topic_id}
                     if self.chat_topic_id is not None
@@ -48,11 +49,12 @@ class NotificationService:
                 json=payload,
                 timeout=10,
             )
-            logger.debug(
-                "Telegram response status=%s body=%s",
-                response.status_code,
-                response.text,
-            )
+            if not response.ok:
+                logger.error(
+                    "Telegram API error %s: %s",
+                    response.status_code,
+                    response.text,
+                )
             response.raise_for_status()
             return True
         except Exception as e:
@@ -60,16 +62,23 @@ class NotificationService:
             return False
 
     def notify_door_opened_async(
-        self, door_name: str, username: Optional[str] = None, success: bool = True
+        self, door_name: str, username: Optional[str] = None, success: bool = True,
+        on_behalf_of: Optional[str] = None,
     ) -> None:
-        if success:
-            msg = f"🚪 Door *{door_name}* opened" + (
-                f" for *{username}*" if username else ""
-            )
+        dn = escape(door_name)
+        prefix = "\U0001f6aa" if success else "\u274c"
+        action = "opened" if success else "failed to open"
+        if on_behalf_of:
+            msg = f"{prefix} Door <b>{dn}</b> {action} for <b>{escape(on_behalf_of)}</b> by <b>{escape(username or 'unknown')}</b>"
+        elif username:
+            msg = f"{prefix} Door <b>{dn}</b> {action} for <b>{escape(username)}</b>"
         else:
-            msg = f"❌ Failed to open door *{door_name}*"
+            msg = f"{prefix} Door <b>{dn}</b> {action}"
         _executor.submit(self._send_telegram, msg)
 
     def notify_button_pressed_async(self, door_name: str, gpio_pin: int) -> None:
-        msg = f"🔘 Button pressed for door *{door_name}* (GPIO {gpio_pin})"
+        msg = f"\U0001f518 Button pressed for door <b>{escape(door_name)}</b> (GPIO {gpio_pin})"
         _executor.submit(self._send_telegram, msg)
+
+    def notify_security_alert_async(self, message: str) -> None:
+        _executor.submit(self._send_telegram, message)

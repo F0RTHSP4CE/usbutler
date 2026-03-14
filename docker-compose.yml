@@ -4,6 +4,7 @@ services:
     container_name: usbutler
     restart: always
     privileged: true
+    network_mode: host
     devices:
       - /dev/bus/usb:/dev/bus/usb
       - /dev/gpiochip0:/dev/gpiochip0
@@ -14,8 +15,6 @@ services:
     env_file:
       - .env
       - .env.secrets
-    ports:
-      - "8000:8000"
 
 volumes:
   usbutler-data:

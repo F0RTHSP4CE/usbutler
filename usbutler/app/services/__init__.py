@@ -8,6 +8,7 @@ from app.services.door_control_service import DoorControlService
 from app.services.notification_service import NotificationService
 from app.services.auth_service import AuthService
 from app.services.card_reader_polling import CardReaderPollingService
+from app.services.api_token_service import generate_token, hash_token
 
 __all__ = [
     "UserService",
@@ -18,4 +19,6 @@ __all__ = [
     "NotificationService",
     "AuthService",
     "CardReaderPollingService",
+    "generate_token",
+    "hash_token",
 ]

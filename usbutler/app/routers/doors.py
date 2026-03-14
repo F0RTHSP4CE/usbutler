@@ -3,7 +3,7 @@
 import math
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
-from app.dependencies import ServicesDep
+from app.dependencies import CallerDep, ServicesDep
 from app.models.door_event import DoorEventType
 from app.schemas.door import (
     DoorCreate,
@@ -111,23 +111,27 @@ def delete_door(door_id: int, s: ServicesDep):
 
 
 @router.post("/{door_id}/open", response_model=DoorOpenResponse)
-def open_door(door_id: int, request: DoorOpenRequest, s: ServicesDep):
+def open_door(
+    door_id: int, request: DoorOpenRequest, s: ServicesDep, caller: CallerDep
+):
     door = s.doors.get_by_id(door_id)
     if not door:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Door {door_id} not found")
 
-    username, user_id = None, None
-    if request.user_id:
-        if user := s.users.get_by_id(request.user_id):
-            username, user_id = user.username, user.id
-    elif request.username:
-        username = request.username
+    # Identity comes from the authenticated token
+    username = caller.username if caller else "admin"
+    user_id = caller.id if caller else None
 
-    s.door_control.open_door_async(door, username, DoorEventType.API, user_id)
+    # Proxy usage: store on_behalf_of separately
+    on_behalf_of = None
+    if request.on_behalf_of:
+        on_behalf_of = request.on_behalf_of
+
+    success = s.door_control.open_door_blocking(door, username, DoorEventType.API, user_id, on_behalf_of)
 
     return DoorOpenResponse(
-        success=True,
-        message=f"Door '{door.name}' opening",
+        success=success,
+        message=f"Door '{door.name}' opened" if success else f"Door '{door.name}' failed to open",
         door_id=door.id,
         door_name=door.name,
     )

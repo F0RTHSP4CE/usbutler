@@ -13,7 +13,11 @@ dependencies = [
     "requests>=2.32.0",
     "sqlalchemy>=2.0.45",
     "python-multipart>=0.0.21",
+    "httpx>=0.28.1",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
 
 [dependency-groups]
 dev = [

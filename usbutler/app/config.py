@@ -22,7 +22,8 @@ class Settings:
 
     BUTTON_DEBOUNCE_TIME = float(os.getenv("BUTTON_DEBOUNCE_TIME", "3"))
 
-    API_PASSWORD = os.getenv("API_PASSWORD", "")
+    ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+    POS_PASSWORD = os.getenv("POS_PASSWORD", "")
 
 
 settings = Settings()

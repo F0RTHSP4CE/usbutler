@@ -19,6 +19,7 @@ class DoorEventService:
         event_type: DoorEventType,
         user_id: Optional[int] = None,
         username: Optional[str] = None,
+        on_behalf_of: Optional[str] = None,
         timestamp: Optional[datetime] = None,
     ) -> DoorEvent:
         event = DoorEvent(
@@ -26,6 +27,7 @@ class DoorEventService:
             event_type=event_type,
             user_id=user_id,
             username=username,
+            on_behalf_of=on_behalf_of,
             timestamp=timestamp or datetime.utcnow(),
         )
         self.db.add(event)

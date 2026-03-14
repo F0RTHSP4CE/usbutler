@@ -58,6 +58,7 @@ class DoorControlService:
         event_type: DoorEventType,
         username: Optional[str] = None,
         user_id: Optional[int] = None,
+        on_behalf_of: Optional[str] = None,
     ):
         try:
             with self.session_factory() as services:
@@ -66,9 +67,10 @@ class DoorControlService:
                     event_type=event_type,
                     username=username,
                     user_id=user_id,
+                    on_behalf_of=on_behalf_of,
                 )
         except Exception as e:
-            logger.error(f"Failed to persist door event: {e}")
+            logger.error(f"Failed to persist door event: {e}", exc_info=True)
 
     def _persist_event_async(
         self,
@@ -76,9 +78,10 @@ class DoorControlService:
         event_type: DoorEventType,
         username: Optional[str] = None,
         user_id: Optional[int] = None,
+        on_behalf_of: Optional[str] = None,
     ):
         """Persist event asynchronously for use in event loops/monitoring."""
-        _executor.submit(self._persist_event, door_id, event_type, username, user_id)
+        _executor.submit(self._persist_event, door_id, event_type, username, user_id, on_behalf_of)
 
     def get_last_door_event(self) -> Optional[dict]:
         """Get the most recent door event from database."""
@@ -97,6 +100,7 @@ class DoorControlService:
                     "gpio_pin": door.gpio_pin if door else 0,
                     "event_type": event.event_type.value,
                     "username": event.username,
+                    "on_behalf_of": event.on_behalf_of,
                     "timestamp": event.timestamp,
                 }
         except Exception as e:
@@ -256,6 +260,7 @@ class DoorControlService:
         username: Optional[str] = None,
         event_type: DoorEventType = DoorEventType.API,
         user_id: Optional[int] = None,
+        on_behalf_of: Optional[str] = None,
     ) -> bool:
         logger.info(f"Opening door '{door.name}' (pin={door.gpio_pin})")
         pin = door.gpio_pin
@@ -267,13 +272,21 @@ class DoorControlService:
                 lock.acquire()
             self._pin_in_output[pin] = True
             if released:
-                released.wait(timeout=2.0)
-
-            success = (
-                self._control_gpio(door)
-                if self._gpio_available
-                else self._simulate_gpio(door)
-            )
+                if not released.wait(timeout=5.0):
+                    logger.error(f"Timeout waiting for button monitor to release pin {pin}")
+                    success = False
+                else:
+                    success = (
+                        self._control_gpio(door)
+                        if self._gpio_available
+                        else self._simulate_gpio(door)
+                    )
+            else:
+                success = (
+                    self._control_gpio(door)
+                    if self._gpio_available
+                    else self._simulate_gpio(door)
+                )
         except Exception as e:
             logger.error(f"Error opening door '{door.name}': {e}")
             success = False
@@ -282,10 +295,8 @@ class DoorControlService:
             if lock:
                 lock.release()
 
-        if success:
-            self._persist_event(door.id, event_type, username, user_id)
-
-        self.notification_service.notify_door_opened_async(door.name, username, success)
+        self._persist_event(door.id, event_type, username, user_id, on_behalf_of)
+        self.notification_service.notify_door_opened_async(door.name, username, success, on_behalf_of)
         return success
 
     def _control_gpio(self, door: Door) -> bool:
@@ -321,8 +332,9 @@ class DoorControlService:
         username: Optional[str] = None,
         event_type: DoorEventType = DoorEventType.API,
         user_id: Optional[int] = None,
+        on_behalf_of: Optional[str] = None,
     ) -> bool:
-        _executor.submit(self._open_door_sync, door, username, event_type, user_id)
+        _executor.submit(self._open_door_sync, door, username, event_type, user_id, on_behalf_of)
         return True
 
     def open_door_blocking(
@@ -331,8 +343,9 @@ class DoorControlService:
         username: Optional[str] = None,
         event_type: DoorEventType = DoorEventType.API,
         user_id: Optional[int] = None,
+        on_behalf_of: Optional[str] = None,
     ) -> bool:
-        return self._open_door_sync(door, username, event_type, user_id)
+        return self._open_door_sync(door, username, event_type, user_id, on_behalf_of)
 
     def open_door_for_card(self, door: Door, username: Optional[str] = None) -> bool:
         return self.open_door_async(door, username, DoorEventType.CARD)

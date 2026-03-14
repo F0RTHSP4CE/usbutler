@@ -11,10 +11,10 @@
         — opened via <strong>🔘 button</strong>
         {% elif last_event.event_type == "card" %}
         — opened via <strong>💳 card</strong>{% if last_event.username %} by <strong>{{ last_event.username
-            }}</strong>{% endif %}
+            }}</strong>{% endif %}{% if last_event.on_behalf_of %} for <strong>{{ last_event.on_behalf_of }}</strong>{% endif %}
         {% else %}
         — opened via <strong>🌐 API</strong>{% if last_event.username %} by <strong>{{ last_event.username }}</strong>{%
-        endif %}
+        endif %}{% if last_event.on_behalf_of %} for <strong>{{ last_event.on_behalf_of }}</strong>{% endif %}
         {% endif %}
         ({{ last_event.timestamp.strftime('%H:%M:%S') }})
     </p>
@@ -78,6 +78,7 @@
             <th>Door</th>
             <th>Method</th>
             <th>User</th>
+            <th>On behalf of</th>
         </tr>
         {% for event in history %}
         <tr>
@@ -89,10 +90,11 @@
                 {% else %}🌐 API{% endif %}
             </td>
             <td>{{ event.username or "—" }}</td>
+            <td>{{ event.on_behalf_of or "—" }}</td>
         </tr>
         {% else %}
         <tr>
-            <td colspan="4">No history yet</td>
+            <td colspan="5">No history yet</td>
         </tr>
         {% endfor %}
     </table>

@@ -25,6 +25,8 @@ RUN apt-get update && apt-get install -y \
     # Process supervisor and USB monitoring
     supervisor \
     udev \
+    # sqlite3 for database management
+    sqlite3 \
     # Clean up
     && rm -rf /var/lib/apt/lists/* \
     && apt-get autoremove -y \
