@@ -60,18 +60,15 @@ async def logout():
 
 @router.get("/", response_class=HTMLResponse)
 async def index(
-    request: Request, s: ServicesDepUI, api_key: Optional[str] = Cookie(None)
+    request: Request, s: ServicesDepUI,
 ):
-    if not _is_auth(api_key):
-        return RedirectResponse(url="/login", status_code=302)
-
     last_scan, last_scan_identifier = None, None
     if s.card_reader_polling:
         last_scan = s.card_reader_polling.get_last_scan()
         if last_scan:
             last_scan_identifier = s.identifiers.get_by_value(last_scan["value"])
 
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         "index.html",
         {
             "request": request,
@@ -81,15 +78,14 @@ async def index(
             "auth_enabled": bool(settings.ADMIN_PASSWORD),
         },
     )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @router.get("/doors", response_class=HTMLResponse)
 async def doors_page(
-    request: Request, s: ServicesDepUI, api_key: Optional[str] = Cookie(None)
+    request: Request, s: ServicesDepUI,
 ):
-    if not _is_auth(api_key):
-        return RedirectResponse(url="/login", status_code=302)
-
     events, _ = s.door_events.get_history(page=1, page_size=20)
     history = []
     for event in events:
@@ -105,7 +101,7 @@ async def doors_page(
             }
         )
 
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         "doors.html",
         {
             "request": request,
@@ -115,3 +111,5 @@ async def doors_page(
             "auth_enabled": bool(settings.ADMIN_PASSWORD),
         },
     )
+    response.headers["Cache-Control"] = "no-store"
+    return response

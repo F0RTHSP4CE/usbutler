@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Annotated, Generator, Optional
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 
@@ -148,6 +148,25 @@ CallerUser = ApiKeyAuth
 PosSecretAuth = Annotated[bool, Depends(verify_pos_secret)]
 
 
+def verify_ui_session(
+    api_key: Annotated[str | None, Cookie()] = None,
+) -> bool:
+    """Check cookie-based authentication for UI routes."""
+    if not settings.ADMIN_PASSWORD:
+        return True
+    if not api_key or not secrets.compare_digest(
+        api_key.encode("utf-8"), settings.ADMIN_PASSWORD.encode("utf-8")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_302_FOUND,
+            headers={"Location": "/login"},
+        )
+    return True
+
+
+UiSessionAuth = Annotated[bool, Depends(verify_ui_session)]
+
+
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
@@ -253,8 +272,8 @@ def get_services_pos(db: DbSession, _auth: PosSecretAuth) -> Services:
     return _create_services(db)
 
 
-def get_services_ui(db: DbSession) -> Services:
-    """Get services for UI routes (no API key header check)."""
+def get_services_ui(db: DbSession, _auth: UiSessionAuth) -> Services:
+    """Get services for UI routes (cookie-based auth)."""
     return _create_services(db)
 
 

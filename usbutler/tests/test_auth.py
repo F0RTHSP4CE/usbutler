@@ -17,6 +17,7 @@ from app.database import Base
 from app.dependencies import (
     ApiKeyAuth,
     PosSecretAuth,
+    UiSessionAuth,
     get_db,
 )
 from app.models.user import User
@@ -53,6 +54,10 @@ def app_and_db():
 
     @router.get("/pos-protected")
     def pos_protected(auth: PosSecretAuth):
+        return {"ok": True}
+
+    @router.get("/ui-protected")
+    def ui_protected(auth: UiSessionAuth):
         return {"ok": True}
 
     app = FastAPI()
@@ -180,3 +185,25 @@ class TestPosSecretAuth:
         client = TestClient(app)
         r = client.get("/pos-protected")
         assert r.status_code == 401
+
+
+class TestUiSessionAuth:
+    def test_correct_cookie(self, app_and_db):
+        app, _ = app_and_db
+        client = TestClient(app, cookies={"api_key": "test_admin_pw"})
+        r = client.get("/ui-protected", follow_redirects=False)
+        assert r.status_code == 200
+
+    def test_wrong_cookie(self, app_and_db):
+        app, _ = app_and_db
+        client = TestClient(app, cookies={"api_key": "wrong"})
+        r = client.get("/ui-protected", follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["location"] == "/login"
+
+    def test_missing_cookie(self, app_and_db):
+        app, _ = app_and_db
+        client = TestClient(app)
+        r = client.get("/ui-protected", follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["location"] == "/login"
