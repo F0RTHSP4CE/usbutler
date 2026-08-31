@@ -60,8 +60,7 @@ class CardReaderPollingService:
         self._last_id: Optional[str] = None
         self._last_time: float = 0
         self._debounce = 3.0
-        self._last_open_chain: Optional[int] = None
-        self._last_open_time: float = 0
+        self._consecutive_read_failures = 0
 
     def start(self) -> None:
         if self._running:
@@ -100,13 +99,26 @@ class CardReaderPollingService:
         if not self._reader.wait_for_card(timeout=5):
             return
 
+        restart_reader = False
+        completed_read = False
         try:
             result = self._reader.read_card_data()
             value = result.identifier()
             type_str = result.identifier_type()
 
             if not value or not type_str:
+                self._consecutive_read_failures += 1
+                logger.warning(
+                    "Card detected without a readable identifier (failure %s)",
+                    self._consecutive_read_failures,
+                )
+                if self._consecutive_read_failures >= 3:
+                    restart_reader = True
+                    self._consecutive_read_failures = 0
                 return
+
+            completed_read = True
+            self._consecutive_read_failures = 0
 
             try:
                 id_type = IdentifierType(type_str)
@@ -119,7 +131,7 @@ class CardReaderPollingService:
                 )
 
             # Debounce
-            now = time.time()
+            now = time.monotonic()
             if value == self._last_id and (now - self._last_time) < self._debounce:
                 return
             self._last_id = value
@@ -130,9 +142,16 @@ class CardReaderPollingService:
 
         except Exception as e:
             logger.error(f"Card read error: {e}")
+            self._consecutive_read_failures += 1
+            if self._consecutive_read_failures >= 3:
+                restart_reader = True
+                self._consecutive_read_failures = 0
         finally:
+            if completed_read:
+                self._reader.wait_for_card_removal(timeout=2)
             self._reader.disconnect()
-            self._restart_pcscd()
+            if restart_reader:
+                self._restart_pcscd()
 
     def _authenticate(self, identifier: str, scan: CardScanResult) -> None:
         from app.services.auth_service import AuthService
@@ -152,19 +171,10 @@ class CardReaderPollingService:
                 logger.error(f"Door {self.default_door_id} not found")
                 return
 
-            chain_key = matched_identifier.chain_root_id or -matched_identifier.id
-            now = time.time()
-            duplicate_presentation = (
-                chain_key == self._last_open_chain
-                and (now - self._last_open_time) < self._debounce
+            logger.info(f"Opening door '{door.name}' for '{user.username}'")
+            self._door_control.open_door_async(
+                door, user.username, DoorEventType.CARD, user.id
             )
-            if not duplicate_presentation:
-                logger.info(f"Opening door '{door.name}' for '{user.username}'")
-                self._door_control.open_door_async(
-                    door, user.username, DoorEventType.CARD, user.id
-                )
-                self._last_open_chain = chain_key
-                self._last_open_time = now
 
             rotation = UidRotationService(s.db)
             if matched_identifier.state == IdentifierState.PENDING:

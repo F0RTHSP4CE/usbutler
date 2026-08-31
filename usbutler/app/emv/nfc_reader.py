@@ -134,6 +134,7 @@ class NFCReader:
     def send_apdu(self, apdu: List[int]) -> Tuple[List[int], int, int]:
         if not self.connection:
             raise Exception("Not connected to card")
+        last_error: Optional[Exception] = None
         for attempt in range(3):
             with self._io_lock:
                 conn = self.connection
@@ -150,10 +151,14 @@ class NFCReader:
                 with self._io_lock:
                     return conn.transmit(apdu)
             except Exception as e:
+                last_error = e
                 print(f"APDU error (attempt {attempt+1}): {e}")
                 self.disconnect()
                 self._timed_pause(0.02)
-        raise Exception("APDU transmission failed after retries")
+        detail = f": {last_error}" if last_error else ""
+        raise Exception(
+            f"APDU transmission failed after retries{detail}"
+        ) from last_error
 
     def _timed_pause(self, duration: float):
         if duration > 0:

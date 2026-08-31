@@ -1,11 +1,15 @@
 """Card reader service for NFC cards - extracts PAN or UID."""
 
+import logging
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from smartcard.util import toHexString
 
 from app.emv.nfc_reader import NFCReader
+
+logger = logging.getLogger(__name__)
 
 # Known Mifare/NTAG ATR prefixes (contactless-only tags)
 MIFARE_CLASSIC_ATR_PREFIXES = (
@@ -112,6 +116,9 @@ class CardReaderService:
     def disconnect(self) -> None:
         self.nfc_reader.disconnect()
 
+    def wait_for_card_removal(self, timeout: int = 5) -> bool:
+        return self.nfc_reader.wait_for_card_removal(timeout=timeout)
+
     def read_card_data(self) -> CardScanResult:
         if not self.nfc_reader.is_connected():
             raise RuntimeError("No card connected")
@@ -152,12 +159,18 @@ class CardReaderService:
         return ""
 
     def _get_uid(self) -> Optional[str]:
-        try:
+        last_status = (0x00, 0x00)
+        for attempt in range(2):
             response, sw1, sw2 = self._transmit([0xFF, 0xCA, 0x00, 0x00, 0x00])
             if sw1 == 0x90 and response:
                 return "".join(f"{b:02X}" for b in response)
-        except Exception:
-            pass
+            last_status = (sw1, sw2)
+            if attempt == 0:
+                time.sleep(0.05)
+        logger.warning(
+            "Card was detected but its UID could not be read (status=%02X%02X)",
+            *last_status,
+        )
         return None
 
     def _try_read_emv_pan(self) -> Optional[str]:

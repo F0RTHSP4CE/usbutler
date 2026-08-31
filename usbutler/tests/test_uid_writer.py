@@ -80,6 +80,10 @@ def test_writer_failures_have_stable_audit_classifications():
         == UidRotationOutcome.CONNECTION_LOSS
     )
     assert (
+        classify_writer_exception(RuntimeError("Card was removed. (0x80100069)"))
+        == UidRotationOutcome.CONNECTION_LOSS
+    )
+    assert (
         classify_writer_exception(RuntimeError("PC/SC transport failed"))
         == UidRotationOutcome.PCSC_ERROR
     )
