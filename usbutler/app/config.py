@@ -28,6 +28,10 @@ class Settings:
     DEFAULT_DOOR_ID = int(os.getenv("DEFAULT_DOOR_ID", "1"))
 
     UID_ROTATION_ENABLED = _env_bool("UID_ROTATION_ENABLED", True)
+    UID_WRITE_MAX_ATTEMPTS = max(1, int(os.getenv("UID_WRITE_MAX_ATTEMPTS", "3")))
+    UID_WRITE_RETRY_DELAY_SECONDS = max(
+        0.0, float(os.getenv("UID_WRITE_RETRY_DELAY_SECONDS", "0.15"))
+    )
     MIFARE_CLASSIC_KEY_A = (
         os.getenv("MIFARE_CLASSIC_KEY_A", "FFFFFFFFFFFF").replace(" ", "").upper()
     )

@@ -204,9 +204,14 @@ class UidRotationService:
     def prepare_write(
         self,
         source_identifier_id: int,
-        minimum_interval: timedelta = timedelta(hours=24),
+        minimum_interval: Optional[timedelta] = timedelta(hours=24),
     ) -> Optional[PreparedUidWrite]:
-        """Atomically claim the daily slot and persist a started attempt."""
+        """Atomically claim a write slot and persist an attempt before I/O.
+
+        A ``None`` interval claims every invocation. The root-row update still
+        serializes concurrent scans, while the default retains the rolling
+        24-hour policy.
+        """
         source = self.db.get(Identifier, source_identifier_id)
         if (
             not source
@@ -216,19 +221,23 @@ class UidRotationService:
             return None
 
         now = utcnow()
-        cutoff = now - minimum_interval
+        claim_filters = [
+            Identifier.id == source.chain_root_id,
+            Identifier.chain_root_id == source.chain_root_id,
+        ]
+        if minimum_interval is not None:
+            cutoff = now - minimum_interval
+            claim_filters.append(
+                or_(
+                    Identifier.last_write_attempt_at.is_(None),
+                    Identifier.last_write_attempt_at <= cutoff,
+                )
+            )
         claimed = cast(
             CursorResult[Any],
             self.db.execute(
                 update(Identifier)
-                .where(
-                    Identifier.id == source.chain_root_id,
-                    Identifier.chain_root_id == source.chain_root_id,
-                    or_(
-                        Identifier.last_write_attempt_at.is_(None),
-                        Identifier.last_write_attempt_at <= cutoff,
-                    ),
-                )
+                .where(*claim_filters)
                 .values(last_write_attempt_at=now)
             ),
         )

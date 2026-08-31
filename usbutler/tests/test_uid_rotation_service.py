@@ -45,6 +45,16 @@ def _create_uid(db, user: User, value: str = "01020304") -> Identifier:
 def test_new_user_defaults_to_rotation_enabled(db):
     user = UserService(db).create(UserCreate(username="new-user"))
     assert user.uid_rotation_enabled is True
+    assert user.uid_rotation_every_read is False
+
+
+def test_every_read_policy_can_be_enabled_per_user(db):
+    users = UserService(db)
+    user = users.create(UserCreate(username="new-user"))
+
+    users.update(user.id, UserUpdate(uid_rotation_every_read=True))
+
+    assert users.get_by_id(user.id).uid_rotation_every_read is True
 
 
 def test_disabled_user_uid_remains_static(db):
@@ -128,6 +138,29 @@ def test_daily_retry_creates_fresh_pending_branch(db, monkeypatch):
         ).all()
     )
     assert {item.value for item in pending} == {"11111111", "22222222"}
+
+
+def test_every_read_policy_bypasses_daily_slot(db, monkeypatch):
+    _sequence_rng(monkeypatch, ["11111111", "22222222"])
+    user = UserService(db).create(
+        UserCreate(username="alice", uid_rotation_every_read=True)
+    )
+    current = _create_uid(db, user)
+    rotation = UidRotationService(db)
+
+    first = rotation.prepare_write(current.id, minimum_interval=None)
+    second = rotation.prepare_write(current.id, minimum_interval=None)
+
+    assert first is not None
+    assert second is not None
+    assert first.target_uid == "11111111"
+    assert second.target_uid == "22222222"
+    assert db.scalar(
+        select(UidRotationAttempt).where(UidRotationAttempt.id == first.attempt_id)
+    )
+    assert db.scalar(
+        select(UidRotationAttempt).where(UidRotationAttempt.id == second.attempt_id)
+    )
 
 
 def test_daily_slot_is_atomic_across_sessions(tmp_path, monkeypatch):

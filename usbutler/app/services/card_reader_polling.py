@@ -5,7 +5,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from app.models.door_event import DoorEventType
@@ -49,7 +49,10 @@ class CardReaderPollingService:
         self.poll_interval = poll_interval
         self.default_door_id = default_door_id
         self._uid_writer = uid_writer or ACR122UidWriter(
-            card_reader_service.nfc_reader, settings.MIFARE_CLASSIC_KEY_A
+            card_reader_service.nfc_reader,
+            settings.MIFARE_CLASSIC_KEY_A,
+            max_attempts=settings.UID_WRITE_MAX_ATTEMPTS,
+            retry_delay_seconds=settings.UID_WRITE_RETRY_DELAY_SECONDS,
         )
 
         self._running = False
@@ -210,9 +213,25 @@ class CardReaderPollingService:
                 return
 
             try:
-                prepared = rotation.prepare_write(matched_identifier.id)
+                minimum_interval = (
+                    None if user.uid_rotation_every_read else timedelta(hours=24)
+                )
+                prepared = rotation.prepare_write(
+                    matched_identifier.id,
+                    minimum_interval=minimum_interval,
+                )
                 if not prepared:
+                    logger.info(
+                        "UID rotation skipped for '%s': 24-hour write limit is active",
+                        user.username,
+                    )
                     return
+                logger.info(
+                    "Attempting UID rotation for '%s' lineage %s (%s policy)",
+                    user.username,
+                    prepared.chain_root_id,
+                    "every read" if user.uid_rotation_every_read else "24-hour",
+                )
                 result = self._uid_writer.write_uid(
                     prepared.source_uid, prepared.target_uid
                 )

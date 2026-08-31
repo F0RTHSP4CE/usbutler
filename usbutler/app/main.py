@@ -54,7 +54,12 @@ async def lifespan(app: FastAPI):
         session_factory=create_services_for_thread,
         poll_interval=settings.CARD_READER_POLL_INTERVAL,
         default_door_id=settings.DEFAULT_DOOR_ID,
-        uid_writer=ACR122UidWriter(nfc_reader, settings.MIFARE_CLASSIC_KEY_A),
+        uid_writer=ACR122UidWriter(
+            nfc_reader,
+            settings.MIFARE_CLASSIC_KEY_A,
+            max_attempts=settings.UID_WRITE_MAX_ATTEMPTS,
+            retry_delay_seconds=settings.UID_WRITE_RETRY_DELAY_SECONDS,
+        ),
     )
     registry.card_reader_polling = card_reader_polling
     card_reader_polling.start()

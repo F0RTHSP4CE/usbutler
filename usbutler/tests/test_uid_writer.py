@@ -3,6 +3,7 @@
 from app.models.identifier import UidRotationOutcome, UidRotationProtocol
 from app.services.uid_writer import (
     ACR122UidWriter,
+    UidWriteResult,
     UidWriterError,
     UidWriterNak,
     classify_writer_exception,
@@ -87,3 +88,75 @@ def test_writer_failures_have_stable_audit_classifications():
         classify_writer_exception(RuntimeError("PC/SC transport failed"))
         == UidRotationOutcome.PCSC_ERROR
     )
+
+
+def test_transient_write_failure_is_retried(monkeypatch):
+    writer = ACR122UidWriter(DummyReader(), max_attempts=3, retry_delay_seconds=0)
+    results = iter(
+        (
+            UidWriteResult(
+                UidRotationProtocol.GEN1A,
+                UidRotationOutcome.CONNECTION_LOSS,
+                "card removed",
+            ),
+            UidWriteResult(
+                UidRotationProtocol.GEN1A,
+                UidRotationOutcome.ACKNOWLEDGED,
+                "write acknowledged",
+            ),
+        )
+    )
+    reconnects = []
+    monkeypatch.setattr(writer, "_write_uid_once", lambda source, target: next(results))
+    monkeypatch.setattr(writer, "_reconnect", lambda: reconnects.append(True) or True)
+
+    result = writer.write_uid("01020304", "A1B2C3D4")
+
+    assert result.outcome == UidRotationOutcome.ACKNOWLEDGED
+    assert reconnects == [True]
+    assert "hardware attempt 2/3" in result.detail
+
+
+def test_explicit_nak_is_not_retried(monkeypatch):
+    writer = ACR122UidWriter(DummyReader(), max_attempts=3, retry_delay_seconds=0)
+    calls = []
+    monkeypatch.setattr(
+        writer,
+        "_write_uid_once",
+        lambda source, target: calls.append(True)
+        or UidWriteResult(
+            UidRotationProtocol.GEN1A,
+            UidRotationOutcome.NAK,
+            "card returned NAK",
+        ),
+    )
+
+    result = writer.write_uid("01020304", "A1B2C3D4")
+
+    assert result.outcome == UidRotationOutcome.NAK
+    assert calls == [True]
+
+
+def test_gen1a_probe_uses_direct_seven_bit_wakeup_before_halt(monkeypatch):
+    writer = ACR122UidWriter(DummyReader(), max_attempts=1)
+    block = bytes.fromhex("01020304040000112233445566778899")
+    frames = []
+
+    monkeypatch.setattr(writer, "_set_raw_mode", lambda **kwargs: None)
+
+    def communicate(payload):
+        frames.append(payload)
+        if payload == bytes((0x30, 0x00)):
+            return block
+        return bytes((0x0A,))
+
+    monkeypatch.setattr(writer, "_communicate", communicate)
+    monkeypatch.setattr(
+        writer,
+        "_reconnect",
+        lambda: (_ for _ in ()).throw(AssertionError("unexpected reconnect")),
+    )
+
+    assert writer._try_gen1a(bytes.fromhex("01020304"), bytes.fromhex("A1B2C3D4"))
+    assert frames[:2] == [bytes((0x40,)), bytes((0x43,))]
+    assert bytes((0x50, 0x00)) not in frames

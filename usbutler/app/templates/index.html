@@ -98,6 +98,13 @@
                            onchange="updateUidRotation({{ user.id }}, this.checked)">
                     {% if user.uid_rotation_enabled %}enabled{% else %}disabled{% endif %}
                 </label>
+                <br>
+                <label title="Attempt a UID write on every distinct card presentation; bypasses the rolling 24-hour limit">
+                    <input type="checkbox"
+                           {% if user.uid_rotation_every_read %}checked{% endif %}
+                           onchange="updateUidRotationEveryRead({{ user.id }}, this.checked)">
+                    every read
+                </label>
             </td>
             <td class="wrap">
                 {% for ident in user.identifiers %}
@@ -179,6 +186,16 @@
     async function updateUidRotation(userId, enabled) {
         try {
             await api('PATCH', `/users/${userId}`, { uid_rotation_enabled: enabled });
+            location.reload();
+        } catch (e) {
+            showAlert(e.message, 'danger');
+            location.reload();
+        }
+    }
+
+    async function updateUidRotationEveryRead(userId, enabled) {
+        try {
+            await api('PATCH', `/users/${userId}`, { uid_rotation_every_read: enabled });
             location.reload();
         } catch (e) {
             showAlert(e.message, 'danger');

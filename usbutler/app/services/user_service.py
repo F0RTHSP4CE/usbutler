@@ -45,6 +45,7 @@ class UserService:
             status=data.status,
             api_allowed_sources=allowed_sources_csv,
             uid_rotation_enabled=data.uid_rotation_enabled,
+            uid_rotation_every_read=data.uid_rotation_every_read,
         )
         self.db.add(user)
         self.db.commit()
@@ -62,7 +63,11 @@ class UserService:
             return None
         update_data = data.model_dump(
             exclude_unset=True,
-            exclude={"allowed_sources", "uid_rotation_enabled"},
+            exclude={
+                "allowed_sources",
+                "uid_rotation_enabled",
+                "uid_rotation_every_read",
+            },
         )
         for k, v in update_data.items():
             setattr(user, k, v)
@@ -77,6 +82,8 @@ class UserService:
                 data.uid_rotation_enabled,
                 initialize_candidates=settings.UID_ROTATION_ENABLED,
             )
+        if data.uid_rotation_every_read is not None:
+            user.uid_rotation_every_read = data.uid_rotation_every_read
         self.db.commit()
         self.db.refresh(user)
         return user

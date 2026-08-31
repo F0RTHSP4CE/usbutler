@@ -1,6 +1,6 @@
 """Tests for UserService with token and allowed_sources fields."""
 
-from app.models.user import User, UserStatus
+from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
 from app.services.api_token_service import generate_token, hash_token
 from app.services.user_service import UserService
@@ -12,6 +12,7 @@ class TestUserServiceTokens:
         user = svc.create(UserCreate(username="alice"))
         assert user.api_token_hash is None
         assert user.api_allowed_sources is None
+        assert user.uid_rotation_every_read is False
 
     def test_create_user_with_sources(self, db):
         svc = UserService(db)
@@ -43,7 +44,9 @@ class TestUserServiceTokens:
     def test_update_allowed_sources(self, db):
         svc = UserService(db)
         user = svc.create(UserCreate(username="eve"), "10.0.0.0/8")
-        svc.update(user.id, UserUpdate(allowed_sources=["172.16.0.0/12"]), "172.16.0.0/12")
+        svc.update(
+            user.id, UserUpdate(allowed_sources=["172.16.0.0/12"]), "172.16.0.0/12"
+        )
         reloaded = svc.get_by_id(user.id)
         assert reloaded.api_allowed_sources == "172.16.0.0/12"
 

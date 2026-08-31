@@ -85,6 +85,53 @@ def test_rotation_failure_does_not_block_door(db, monkeypatch):
     assert lineage["attempts"][0].outcome.value == "connection_loss"
 
 
+def test_every_read_policy_attempts_each_presentation(db, monkeypatch):
+    values = iter(("11111111", "22222222"))
+    monkeypatch.setattr(
+        "app.services.uid_rotation_service.secrets.token_bytes",
+        lambda _: bytes.fromhex(next(values)),
+    )
+    users = UserService(db)
+    identifiers = IdentifierService(db)
+    doors = DoorService(db)
+    user = users.create(UserCreate(username="alice", uid_rotation_every_read=True))
+    root = identifiers.create(
+        IdentifierCreate(value="01020304", type=IdentifierType.UID, user_id=user.id)
+    )
+    door = Door(name="Front", gpio_pin=17, open_hold_time=0.01)
+    db.add(door)
+    db.commit()
+
+    @contextmanager
+    def services():
+        yield SimpleNamespace(
+            db=db,
+            users=users,
+            identifiers=identifiers,
+            doors=doors,
+        )
+
+    events = []
+    polling = CardReaderPollingService(
+        card_reader_service=UnusedReaderService(),
+        door_control_service=FakeDoorControl(events),
+        session_factory=services,
+        uid_writer=ExplodingWriter(events),
+    )
+    scan = CardScanResult(
+        uid="01020304",
+        atr="3B8F8001804F0CA000000306030001",
+        mifare_classic=True,
+        identifiers={"identifier": {"type": "UID", "value": "01020304"}},
+    )
+
+    polling._authenticate("01020304", scan)
+    polling._authenticate("01020304", scan)
+
+    assert events == ["open", "write", "open", "write"]
+    assert len(UidRotationService(db).get_lineage(root.id)["attempts"]) == 2
+
+
 def test_admin_ui_renders_masked_lineage_and_last_attempt(db, monkeypatch):
     monkeypatch.setattr(
         "app.services.uid_rotation_service.secrets.token_bytes",

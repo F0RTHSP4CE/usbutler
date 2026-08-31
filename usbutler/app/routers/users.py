@@ -109,5 +109,6 @@ def _user_response(user) -> dict:
         "status": user.status,
         "allowed_sources": sources,
         "uid_rotation_enabled": user.uid_rotation_enabled,
+        "uid_rotation_every_read": user.uid_rotation_every_read,
         "identifiers": list(user.identifiers) if hasattr(user, "identifiers") else [],
     }

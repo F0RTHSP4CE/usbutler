@@ -27,14 +27,21 @@ def test_fresh_database_migrates_to_rotation_schema(tmp_path, monkeypatch):
     assert "uid_rotation_enabled" in {
         column["name"] for column in inspect(engine).get_columns("users")
     }
+    assert "uid_rotation_every_read" in {
+        column["name"] for column in inspect(engine).get_columns("users")
+    }
     with engine.begin() as connection:
         connection.execute(
             text("INSERT INTO users (username, status) VALUES ('future', 'ACTIVE')")
         )
-        enabled = connection.execute(
-            text("SELECT uid_rotation_enabled FROM users WHERE username = 'future'")
-        ).scalar_one()
+        enabled, every_read = connection.execute(
+            text(
+                "SELECT uid_rotation_enabled, uid_rotation_every_read "
+                "FROM users WHERE username = 'future'"
+            )
+        ).one()
     assert enabled == 1
+    assert every_read == 0
 
 
 def test_unversioned_legacy_database_is_stamped_and_users_stay_disabled(
@@ -68,7 +75,10 @@ def test_unversioned_legacy_database_is_stamped_and_users_stay_disabled(
 
     with engine.connect() as connection:
         user = connection.execute(
-            text("SELECT uid_rotation_enabled FROM users WHERE id = 1")
+            text(
+                "SELECT uid_rotation_enabled, uid_rotation_every_read "
+                "FROM users WHERE id = 1"
+            )
         ).one()
         identifier = connection.execute(
             text(
@@ -83,6 +93,7 @@ def test_unversioned_legacy_database_is_stamped_and_users_stay_disabled(
         )
 
     assert user.uid_rotation_enabled == 0
+    assert user.uid_rotation_every_read == 0
     assert identifier.value == "01020304"
     assert identifier.state == "STATIC"
     assert identifier.chain_root_id is None
@@ -131,11 +142,17 @@ def test_recover_partially_applied_deployed_sqlite_schema(tmp_path, monkeypatch)
             connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-            == "0002_uid_rotation"
+            == "0003_uid_rotation_every_read"
         )
         assert (
             connection.execute(
                 text("SELECT uid_rotation_enabled FROM users WHERE id = 1")
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                text("SELECT uid_rotation_every_read FROM users WHERE id = 1")
             ).scalar_one()
             == 0
         )
@@ -174,7 +191,7 @@ def test_recover_partially_applied_deployed_sqlite_schema(tmp_path, monkeypatch)
             connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-            == "0002_uid_rotation"
+            == "0003_uid_rotation_every_read"
         )
         assert (
             connection.execute(

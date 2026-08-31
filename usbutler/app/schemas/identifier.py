@@ -49,6 +49,7 @@ class UserBrief(BaseModel):
     username: str
     status: str
     uid_rotation_enabled: bool
+    uid_rotation_every_read: bool
 
 
 class IdentifierWithUser(IdentifierResponse):

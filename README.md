@@ -32,12 +32,18 @@ optional:
 
 UID rotation is available for 4-byte Gen1A and Gen2/CUID ("magic") MIFARE
 Classic cards. Genuine MIFARE manufacturer blocks are read-only; those cards
-continue to open the door with their confirmed UID while daily write attempts
+continue to open the door with their confirmed UID while write attempts
 fail safely.
 
 - Existing users start with rotation disabled after migration.
 - New users start with rotation enabled and can be changed in the admin UI.
 - `UID_ROTATION_ENABLED` is the global kill switch.
+- Each user may keep the default rolling 24-hour write limit or enable
+  **every read** in the admin UI to attempt a write on every distinct card
+  presentation.
+- `UID_WRITE_MAX_ATTEMPTS` bounds transient hardware retries (default `3`), and
+  `UID_WRITE_RETRY_DELAY_SECONDS` controls the delay between them (default
+  `0.15`). Explicit NAK and unsupported/read-only results are not retried.
 - `MIFARE_CLASSIC_KEY_A` configures the Gen2 sector-0 key (default
   `FFFFFFFFFFFF`) and belongs in `.env.secrets`.
 

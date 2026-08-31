@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
 from app.emv.nfc_reader import NFCReader
 from app.models.identifier import UidRotationOutcome, UidRotationProtocol
+
+logger = logging.getLogger(__name__)
 
 
 class UidWriterError(RuntimeError):
@@ -71,7 +75,20 @@ class ACR122UidWriter:
     _RX_MODE = 0x6303
     _BIT_FRAMING = 0x633D
 
-    def __init__(self, reader: NFCReader, key_a: str = "FFFFFFFFFFFF"):
+    _RETRYABLE_OUTCOMES = {
+        UidRotationOutcome.TIMEOUT,
+        UidRotationOutcome.PCSC_ERROR,
+        UidRotationOutcome.CONNECTION_LOSS,
+        UidRotationOutcome.FAILED,
+    }
+
+    def __init__(
+        self,
+        reader: NFCReader,
+        key_a: str = "FFFFFFFFFFFF",
+        max_attempts: int = 3,
+        retry_delay_seconds: float = 0.15,
+    ):
         self.reader = reader
         cleaned_key = key_a.replace(" ", "").upper()
         if len(cleaned_key) != 12 or any(
@@ -79,10 +96,58 @@ class ACR122UidWriter:
         ):
             raise ValueError("MIFARE_CLASSIC_KEY_A must be exactly 12 hex characters")
         self.key_a = bytes.fromhex(cleaned_key)
+        if max_attempts < 1:
+            raise ValueError("UID write max_attempts must be at least 1")
+        if retry_delay_seconds < 0:
+            raise ValueError("UID write retry delay cannot be negative")
+        self.max_attempts = max_attempts
+        self.retry_delay_seconds = retry_delay_seconds
 
     def write_uid(self, source_uid: str, target_uid: str) -> UidWriteResult:
         source = self._uid_bytes(source_uid)
         target = self._uid_bytes(target_uid)
+
+        result: Optional[UidWriteResult] = None
+        for attempt_number in range(1, self.max_attempts + 1):
+            if attempt_number > 1:
+                try:
+                    if not self._reconnect():
+                        raise UidWriterError("Card could not be reselected for retry")
+                except Exception as exc:
+                    result = UidWriteResult(
+                        UidRotationProtocol.UNKNOWN,
+                        classify_writer_exception(exc),
+                        str(exc),
+                    )
+                else:
+                    result = self._write_uid_once(source, target)
+            else:
+                result = self._write_uid_once(source, target)
+
+            result = self._with_attempt_detail(result, attempt_number)
+            if (
+                result.outcome == UidRotationOutcome.ACKNOWLEDGED
+                or result.outcome not in self._RETRYABLE_OUTCOMES
+                or attempt_number == self.max_attempts
+            ):
+                return result
+
+            logger.warning(
+                "UID write attempt %s/%s failed (%s/%s); retrying",
+                attempt_number,
+                self.max_attempts,
+                result.protocol.value,
+                result.outcome.value,
+            )
+            if self.retry_delay_seconds:
+                time.sleep(self.retry_delay_seconds)
+
+        # The loop is guaranteed to run at least once.
+        assert result is not None
+        return result
+
+    def _write_uid_once(self, source: bytes, target: bytes) -> UidWriteResult:
+        """Run one complete Gen1A probe followed by Gen2/CUID fallback."""
 
         try:
             gen1a = self._try_gen1a(source, target)
@@ -115,6 +180,16 @@ class ACR122UidWriter:
                 f"Neither Gen1A nor Gen2/CUID write was accepted: {exc}",
             )
 
+    def _with_attempt_detail(
+        self, result: UidWriteResult, attempt_number: int
+    ) -> UidWriteResult:
+        detail = result.detail or "UID write completed"
+        return UidWriteResult(
+            result.protocol,
+            result.outcome,
+            f"{detail}; hardware attempt {attempt_number}/{self.max_attempts}",
+        )
+
     @staticmethod
     def _uid_bytes(value: str) -> bytes:
         cleaned = value.replace(" ", "").replace(":", "").upper()
@@ -139,20 +214,21 @@ class ACR122UidWriter:
         """Return False only when the card does not acknowledge the Gen1A unlock."""
         unlocked = False
         try:
-            self._set_raw_mode(crc=True, tx_last_bits=0)
-            try:
-                self._communicate(bytes((0x50, 0x00)))  # HALT has no response
-            except UidWriterError:
-                pass
-
-            self._set_raw_mode(crc=False, tx_last_bits=7)
-            if not self._is_ack(self._communicate(bytes((0x40,)))):
+            # Flipper's current Gen1A poller begins with the 7-bit 0x40 wake-up.
+            # This is also friendlier to ACR122U/PCSC, which can report a card as
+            # removed immediately after HALT. If direct wake-up is declined, try
+            # the conventional HALT + wake-up sequence after reselecting.
+            for halt_first in (False, True):
+                try:
+                    unlocked = self._unlock_gen1a(halt_first=halt_first)
+                except UidWriterError:
+                    unlocked = False
+                if unlocked:
+                    break
+                if not halt_first and not self._reconnect():
+                    return False
+            if not unlocked:
                 return False
-
-            self._set_raw_mode(crc=False, tx_last_bits=0)
-            if not self._is_ack(self._communicate(bytes((0x43,)))):
-                return False
-            unlocked = True
 
             self._set_raw_mode(crc=True, tx_last_bits=0)
             block = self._communicate(bytes((0x30, 0x00)))
@@ -174,6 +250,21 @@ class ACR122UidWriter:
                 self._set_raw_mode(crc=True, tx_last_bits=0)
             except Exception:
                 pass
+
+    def _unlock_gen1a(self, halt_first: bool) -> bool:
+        self._set_raw_mode(crc=True, tx_last_bits=0)
+        if halt_first:
+            try:
+                self._communicate(bytes((0x50, 0x00)))  # HALT has no response
+            except UidWriterError:
+                pass
+
+        self._set_raw_mode(crc=False, tx_last_bits=7)
+        if not self._is_ack(self._communicate(bytes((0x40,)))):
+            return False
+
+        self._set_raw_mode(crc=False, tx_last_bits=0)
+        return self._is_ack(self._communicate(bytes((0x43,))))
 
     def _write_gen2(self, source: bytes, target: bytes) -> None:
         self._apdu([0xFF, 0x82, 0x00, 0x00, 0x06, *self.key_a])
