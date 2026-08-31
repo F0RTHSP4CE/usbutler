@@ -31,7 +31,11 @@ card_reader_service = CardReaderService(nfc_reader)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting usbutler...")
-    run_migrations()
+    try:
+        run_migrations()
+    except Exception:
+        logger.exception("Database migration failed")
+        raise
 
     registry = get_registry()
     door_control = registry.door_control_service

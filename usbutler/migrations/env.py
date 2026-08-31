@@ -10,7 +10,9 @@ from app import models  # noqa: F401 - registers model metadata
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep Uvicorn/application loggers alive so startup migration tracebacks
+    # are visible in container logs.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
