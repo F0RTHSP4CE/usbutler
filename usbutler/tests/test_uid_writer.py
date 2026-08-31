@@ -160,3 +160,29 @@ def test_gen1a_probe_uses_direct_seven_bit_wakeup_before_halt(monkeypatch):
     assert writer._try_gen1a(bytes.fromhex("01020304"), bytes.fromhex("A1B2C3D4"))
     assert frames[:2] == [bytes((0x40,)), bytes((0x43,))]
     assert bytes((0x50, 0x00)) not in frames
+
+
+def test_pcsc_card_removal_during_halt_still_reaches_gen2(monkeypatch):
+    writer = ACR122UidWriter(DummyReader(), max_attempts=1)
+    unlock_calls = []
+    gen2_writes = []
+
+    def unlock(halt_first):
+        unlock_calls.append(halt_first)
+        if halt_first:
+            raise RuntimeError("Card was removed. (0x80100069)")
+        return False
+
+    monkeypatch.setattr(writer, "_unlock_gen1a", unlock)
+    monkeypatch.setattr(writer, "_set_raw_mode", lambda **kwargs: None)
+    monkeypatch.setattr(writer, "_reconnect", lambda: True)
+    monkeypatch.setattr(
+        writer, "_write_gen2", lambda source, target: gen2_writes.append(True)
+    )
+
+    result = writer.write_uid("01020304", "A1B2C3D4")
+
+    assert unlock_calls == [False, True]
+    assert gen2_writes == [True]
+    assert result.protocol == UidRotationProtocol.GEN2
+    assert result.outcome == UidRotationOutcome.ACKNOWLEDGED

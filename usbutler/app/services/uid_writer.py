@@ -223,6 +223,13 @@ class ACR122UidWriter:
                     unlocked = self._unlock_gen1a(halt_first=halt_first)
                 except UidWriterError:
                     unlocked = False
+                except Exception:
+                    # ACR122U/PCSC may invalidate its card handle as soon as the
+                    # fallback HALT is sent. Treat that as a failed Gen1A probe
+                    # so the reconnecting Gen2 path still gets a chance.
+                    if not halt_first:
+                        raise
+                    unlocked = False
                 if unlocked:
                     break
                 if not halt_first and not self._reconnect():
