@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 from app.models.door import Door
-from app.models.identifier import IdentifierType
+from app.models.identifier import IdentifierType, MifareUuidState, MifareUuidValue
 from app.routers.ui import templates
 from app.schemas.identifier import IdentifierCreate
 from app.schemas.user import UserCreate
@@ -12,7 +12,8 @@ from app.services.card_reader import CardReaderService, CardScanResult
 from app.services.card_reader_polling import CardReaderPollingService
 from app.services.door_service import DoorService
 from app.services.identifier_service import IdentifierService
-from app.services.uid_rotation_service import UidRotationService
+from app.services.mifare_block import MifareWriteResult
+from app.services.mifare_rotation_service import MifareRotationService
 from app.services.user_service import UserService
 
 
@@ -25,29 +26,37 @@ class FakeDoorControl:
         return True
 
 
-class ExplodingWriter:
-    def __init__(self, events):
+class FakeMifareStore:
+    def __init__(self, events, verified):
         self.events = events
+        self.verified = verified
+        self.targets = []
 
-    def write_uid(self, source_uid, target_uid):
+    def read_uuid(self):
+        return None
+
+    def write_and_verify(self, target, expected_uid=None):
         self.events.append("write")
-        raise RuntimeError("reader disconnected")
+        self.targets.append(target)
+        return MifareWriteResult(
+            verified=self.verified,
+            attempts=1,
+            observed_uuid=target if self.verified else None,
+            detail=None if self.verified else "card removed",
+        )
 
 
 class UnusedReaderService:
     nfc_reader = SimpleNamespace()
+    mifare_store = None
 
 
-def test_rotation_failure_does_not_block_door(db, monkeypatch):
-    monkeypatch.setattr(
-        "app.services.uid_rotation_service.secrets.token_bytes",
-        lambda _: bytes.fromhex("11111111"),
-    )
+def setup_access(db, enabled=True):
     users = UserService(db)
     identifiers = IdentifierService(db)
     doors = DoorService(db)
-    user = users.create(UserCreate(username="alice"))
-    identifiers.create(
+    user = users.create(UserCreate(username="alice", mifare_rotation_enabled=enabled))
+    identifier = identifiers.create(
         IdentifierCreate(value="01020304", type=IdentifierType.UID, user_id=user.id)
     )
     door = Door(name="Front", gpio_pin=17, open_hold_time=0.01)
@@ -63,106 +72,134 @@ def test_rotation_failure_does_not_block_door(db, monkeypatch):
             doors=doors,
         )
 
+    return user, identifier, services
+
+
+def scan(data_uuid=None):
+    return CardScanResult(
+        uid="01020304",
+        atr="3B8F8001804F0CA000000306030001",
+        mifare_classic=True,
+        mifare_uuid=data_uuid,
+        identifiers={"identifier": {"type": "UID", "value": "01020304"}},
+    )
+
+
+def test_failed_rewrite_never_blocks_door_and_reuses_pending(db):
+    _, _, services = setup_access(db)
     events = []
+    store = FakeMifareStore(events, verified=False)
     polling = CardReaderPollingService(
         card_reader_service=UnusedReaderService(),
         door_control_service=FakeDoorControl(events),
         session_factory=services,
-        uid_writer=ExplodingWriter(events),
-    )
-    scan = CardScanResult(
-        uid="01020304",
-        atr="3B8F8001804F0CA000000306030001",
-        mifare_classic=True,
-        identifiers={"identifier": {"type": "UID", "value": "01020304"}},
+        mifare_store=store,
     )
 
-    polling._authenticate("01020304", scan)
-    polling._authenticate("01020304", scan)
-
-    assert events == ["open", "write", "open"]
-    lineage = UidRotationService(db).get_lineage(1)
-    assert lineage["attempts"][0].outcome.value == "connection_loss"
-
-
-def test_every_read_policy_attempts_each_presentation(db, monkeypatch):
-    values = iter(("11111111", "22222222"))
-    monkeypatch.setattr(
-        "app.services.uid_rotation_service.secrets.token_bytes",
-        lambda _: bytes.fromhex(next(values)),
-    )
-    users = UserService(db)
-    identifiers = IdentifierService(db)
-    doors = DoorService(db)
-    user = users.create(UserCreate(username="alice", uid_rotation_every_read=True))
-    root = identifiers.create(
-        IdentifierCreate(value="01020304", type=IdentifierType.UID, user_id=user.id)
-    )
-    door = Door(name="Front", gpio_pin=17, open_hold_time=0.01)
-    db.add(door)
-    db.commit()
-
-    @contextmanager
-    def services():
-        yield SimpleNamespace(
-            db=db,
-            users=users,
-            identifiers=identifiers,
-            doors=doors,
-        )
-
-    events = []
-    polling = CardReaderPollingService(
-        card_reader_service=UnusedReaderService(),
-        door_control_service=FakeDoorControl(events),
-        session_factory=services,
-        uid_writer=ExplodingWriter(events),
-    )
-    scan = CardScanResult(
-        uid="01020304",
-        atr="3B8F8001804F0CA000000306030001",
-        mifare_classic=True,
-        identifiers={"identifier": {"type": "UID", "value": "01020304"}},
-    )
-
-    polling._authenticate("01020304", scan)
-    polling._authenticate("01020304", scan)
+    polling._authenticate(scan())
+    polling._authenticate(scan())
 
     assert events == ["open", "write", "open", "write"]
-    assert len(UidRotationService(db).get_lineage(root.id)["attempts"]) == 2
+    assert store.targets[0] == store.targets[1]
+    values = db.query(MifareUuidValue).all()
+    assert len(values) == 1
+    assert values[0].state == MifareUuidState.PENDING
 
 
-def test_admin_ui_renders_masked_lineage_and_last_attempt(db, monkeypatch):
+def test_verified_rewrite_is_confirmed_after_door_submission(db):
+    _, identifier, services = setup_access(db)
+    events = []
+    store = FakeMifareStore(events, verified=True)
+    polling = CardReaderPollingService(
+        card_reader_service=UnusedReaderService(),
+        door_control_service=FakeDoorControl(events),
+        session_factory=services,
+        mifare_store=store,
+    )
+
+    polling._authenticate(scan())
+
+    assert events == ["open", "write"]
+    value = db.query(MifareUuidValue).one()
+    assert value.state == MifareUuidState.CONFIRMED
+    assert identifier.mifare_credential.last_verified_rotation_at is not None
+
+
+def test_later_scan_of_pending_target_confirms_without_another_write(db):
+    _, identifier, services = setup_access(db)
+    prepared = MifareRotationService(db).prepare_write(identifier.id)
+    events = []
+    store = FakeMifareStore(events, verified=True)
+    polling = CardReaderPollingService(
+        card_reader_service=UnusedReaderService(),
+        door_control_service=FakeDoorControl(events),
+        session_factory=services,
+        mifare_store=store,
+    )
+
+    polling._authenticate(scan(data_uuid=prepared.target_uuid))
+
+    assert events == ["open"]
+    assert db.query(MifareUuidValue).one().state == MifareUuidState.CONFIRMED
+
+
+def test_disabled_user_keeps_access_but_performs_no_write(db):
+    _, _, services = setup_access(db, enabled=False)
+    events = []
+    polling = CardReaderPollingService(
+        card_reader_service=UnusedReaderService(),
+        door_control_service=FakeDoorControl(events),
+        session_factory=services,
+        mifare_store=FakeMifareStore(events, verified=True),
+    )
+
+    polling._authenticate(scan())
+
+    assert events == ["open"]
+    assert db.query(MifareUuidValue).count() == 0
+
+
+def test_global_kill_switch_stops_writes_without_blocking_access(db, monkeypatch):
+    _, _, services = setup_access(db, enabled=True)
     monkeypatch.setattr(
-        "app.services.uid_rotation_service.secrets.token_bytes",
-        lambda _: bytes.fromhex("11111111"),
+        "app.services.card_reader_polling.settings.MIFARE_DATA_ROTATION_ENABLED",
+        False,
     )
-    users = UserService(db)
-    user = users.create(UserCreate(username="alice"))
-    root = IdentifierService(db).create(
-        IdentifierCreate(value="01020304", type=IdentifierType.UID, user_id=user.id)
+    events = []
+    polling = CardReaderPollingService(
+        card_reader_service=UnusedReaderService(),
+        door_control_service=FakeDoorControl(events),
+        session_factory=services,
+        mifare_store=FakeMifareStore(events, verified=True),
     )
-    rotation = UidRotationService(db)
-    rotation.prepare_write(root.id)
-    lineage = rotation.get_lineage(root.id)
+
+    polling._authenticate(scan())
+
+    assert events == ["open"]
+    assert db.query(MifareUuidValue).count() == 0
+
+
+def test_admin_ui_has_opt_in_checkbox_without_raw_uuid_history(db):
+    _, identifier, _ = setup_access(db, enabled=True)
+    prepared = MifareRotationService(db).prepare_write(identifier.id)
 
     html = templates.env.get_template("index.html").render(
-        users=users.get_all(),
-        lineages={root.id: lineage},
+        users=UserService(db).get_all(),
         last_scan=None,
         last_scan_identifier=None,
         auth_enabled=False,
     )
 
-    assert "01..04" in html
-    assert "11..11" in html
-    assert "unknown · started" in html
-    assert "01020304" not in html
+    assert "MIFARE Rotation" in html
+    assert "mifare_rotation_enabled" in html
+    assert "checked" in html
+    assert prepared.target_uuid not in html
 
 
 class PollingReader:
     def __init__(self, result):
         self.nfc_reader = SimpleNamespace()
+        self.mifare_store = None
         self.result = result
         self.removal_waits = 0
         self.disconnects = 0
@@ -182,22 +219,15 @@ class PollingReader:
 
 
 def test_successful_scan_does_not_restart_pcscd():
-    scan = CardScanResult(
-        uid="01020304",
-        atr="3B8F8001804F0CA000000306030001",
-        mifare_classic=True,
-        identifiers={"identifier": {"type": "UID", "value": "01020304"}},
-    )
-    reader = PollingReader(scan)
+    reader = PollingReader(scan())
     polling = CardReaderPollingService(
         card_reader_service=reader,
         door_control_service=SimpleNamespace(),
         session_factory=lambda: None,
-        uid_writer=ExplodingWriter([]),
     )
     authenticated = []
     restarts = []
-    polling._authenticate = lambda value, result: authenticated.append(value)
+    polling._authenticate = lambda result: authenticated.append(result.uid)
     polling._restart_pcscd = lambda: restarts.append(True)
 
     polling._poll_once()
@@ -208,13 +238,31 @@ def test_successful_scan_does_not_restart_pcscd():
     assert reader.disconnects == 1
 
 
+def test_known_mifare_uuid_can_reach_auth_when_uid_read_failed():
+    uuid_only = scan(data_uuid="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    uuid_only.uid = None
+    uuid_only.identifiers = {}
+    reader = PollingReader(uuid_only)
+    polling = CardReaderPollingService(
+        card_reader_service=reader,
+        door_control_service=SimpleNamespace(),
+        session_factory=lambda: None,
+    )
+    authenticated = []
+    polling._authenticate = lambda result: authenticated.append(result.mifare_uuid)
+
+    polling._poll_once()
+
+    assert authenticated == ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]
+    assert polling.get_last_scan() is None
+
+
 def test_pcscd_restarts_only_after_three_failed_identifier_reads():
     reader = PollingReader(CardScanResult())
     polling = CardReaderPollingService(
         card_reader_service=reader,
         door_control_service=SimpleNamespace(),
         session_factory=lambda: None,
-        uid_writer=ExplodingWriter([]),
     )
     restarts = []
     polling._restart_pcscd = lambda: restarts.append(True)
@@ -246,6 +294,5 @@ class RetryingUidReader:
 
 def test_uid_read_retries_a_transient_status_failure():
     reader = RetryingUidReader()
-
     assert CardReaderService(reader)._get_uid() == "01020304"
     assert reader.calls == 2

@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 from smartcard.util import toHexString
 
 from app.emv.nfc_reader import NFCReader
+from app.services.mifare_block import MifareBlockStore
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,8 @@ class CardScanResult:
     tokenized: bool = False
     atr: str = ""
     mifare_classic: bool = False
+    mifare_uuid: Optional[str] = None
+    mifare_read_error: Optional[str] = None
     identifiers: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
     def identifier(self) -> Optional[str]:
@@ -107,8 +110,13 @@ class CardScanResult:
 class CardReaderService:
     """Reads NFC cards and extracts stable identifiers (PAN or UID)."""
 
-    def __init__(self, nfc_reader: Optional[NFCReader] = None):
+    def __init__(
+        self,
+        nfc_reader: Optional[NFCReader] = None,
+        mifare_store: Optional[MifareBlockStore] = None,
+    ):
         self.nfc_reader = nfc_reader or NFCReader()
+        self.mifare_store = mifare_store
 
     def wait_for_card(self, timeout: int = 10) -> bool:
         return self.nfc_reader.wait_for_card(timeout=timeout)
@@ -131,7 +139,15 @@ class CardReaderService:
             mifare_classic=any(atr.startswith(p) for p in MIFARE_CLASSIC_ATR_PREFIXES),
         )
 
-        # Fast path: contactless-only tags (Mifare, NTAG) - just use UID
+        if result.mifare_classic and self.mifare_store:
+            try:
+                result.mifare_uuid = self.mifare_store.read_uuid()
+            except Exception as exc:
+                result.mifare_read_error = str(exc)
+                logger.warning("MIFARE data-block read failed: %s", exc)
+
+        # Fast path: contactless-only tags keep UID as the administrative
+        # identifier. Authentication may prefer mifare_uuid from this scan.
         if any(atr.startswith(p) for p in CONTACTLESS_ATR_PREFIXES):
             if uid:
                 result.identifiers = {"identifier": {"type": "UID", "value": uid}}

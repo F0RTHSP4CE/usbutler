@@ -4,12 +4,10 @@ from app.models.user import User, UserStatus
 from app.models.door import Door
 from app.models.identifier import (
     Identifier,
-    IdentifierState,
     IdentifierType,
-    UidReservation,
-    UidRotationAttempt,
-    UidRotationOutcome,
-    UidRotationProtocol,
+    MifareCredential,
+    MifareUuidState,
+    MifareUuidValue,
 )
 from app.models.door_event import DoorEvent, DoorEventType
 
@@ -20,10 +18,8 @@ __all__ = [
     "DoorEvent",
     "DoorEventType",
     "Identifier",
-    "IdentifierState",
     "IdentifierType",
-    "UidReservation",
-    "UidRotationAttempt",
-    "UidRotationOutcome",
-    "UidRotationProtocol",
+    "MifareCredential",
+    "MifareUuidState",
+    "MifareUuidValue",
 ]

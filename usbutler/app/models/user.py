@@ -2,7 +2,7 @@
 
 import enum
 from typing import TYPE_CHECKING, List, Optional
-from sqlalchemy import Boolean, String, Enum, false, true
+from sqlalchemy import Boolean, String, Enum, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -29,10 +29,7 @@ class User(Base):
     api_allowed_sources: Mapped[Optional[str]] = mapped_column(
         String(500), nullable=True, default=None
     )
-    uid_rotation_enabled: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default=true()
-    )
-    uid_rotation_every_read: Mapped[bool] = mapped_column(
+    mifare_rotation_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
     )
     identifiers: Mapped[List["Identifier"]] = relationship(

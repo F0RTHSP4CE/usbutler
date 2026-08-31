@@ -27,10 +27,12 @@ class Settings:
     CARD_READER_POLL_INTERVAL = float(os.getenv("CARD_READER_POLL_INTERVAL", "1"))
     DEFAULT_DOOR_ID = int(os.getenv("DEFAULT_DOOR_ID", "1"))
 
-    UID_ROTATION_ENABLED = _env_bool("UID_ROTATION_ENABLED", True)
-    UID_WRITE_MAX_ATTEMPTS = max(1, int(os.getenv("UID_WRITE_MAX_ATTEMPTS", "3")))
-    UID_WRITE_RETRY_DELAY_SECONDS = max(
-        0.0, float(os.getenv("UID_WRITE_RETRY_DELAY_SECONDS", "0.15"))
+    MIFARE_DATA_ROTATION_ENABLED = _env_bool("MIFARE_DATA_ROTATION_ENABLED", True)
+    MIFARE_DATA_BLOCK = int(os.getenv("MIFARE_DATA_BLOCK", "4"))
+    MIFARE_UUID_HISTORY_LIMIT = int(os.getenv("MIFARE_UUID_HISTORY_LIMIT", "3"))
+    MIFARE_WRITE_MAX_ATTEMPTS = int(os.getenv("MIFARE_WRITE_MAX_ATTEMPTS", "3"))
+    MIFARE_WRITE_RETRY_DELAY_SECONDS = float(
+        os.getenv("MIFARE_WRITE_RETRY_DELAY_SECONDS", "0.15")
     )
     MIFARE_CLASSIC_KEY_A = (
         os.getenv("MIFARE_CLASSIC_KEY_A", "FFFFFFFFFFFF").replace(" ", "").upper()
@@ -43,3 +45,10 @@ class Settings:
 
 
 settings = Settings()
+
+if settings.MIFARE_UUID_HISTORY_LIMIT < 1:
+    raise ValueError("MIFARE_UUID_HISTORY_LIMIT must be at least 1")
+if settings.MIFARE_WRITE_MAX_ATTEMPTS < 1:
+    raise ValueError("MIFARE_WRITE_MAX_ATTEMPTS must be at least 1")
+if settings.MIFARE_WRITE_RETRY_DELAY_SECONDS < 0:
+    raise ValueError("MIFARE_WRITE_RETRY_DELAY_SECONDS cannot be negative")

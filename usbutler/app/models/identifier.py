@@ -1,10 +1,12 @@
-"""Identifier and rotating UID lineage models."""
+"""Identifier and MIFARE credential models."""
 
 import enum
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
-from sqlalchemy import DateTime, String, Enum, ForeignKey, Integer, Index, func
+from typing import TYPE_CHECKING, List, Optional
+
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from app.database import Base
 from app.utils.time import utcnow
 
@@ -17,13 +19,6 @@ class IdentifierType(str, enum.Enum):
     UID = "UID"
 
 
-class IdentifierState(str, enum.Enum):
-    STATIC = "static"
-    CURRENT = "current"
-    PENDING = "pending"
-    RETIRED = "retired"
-
-
 class Identifier(Base):
     __tablename__ = "identifiers"
 
@@ -34,120 +29,86 @@ class Identifier(Base):
         Integer, ForeignKey("users.id"), nullable=True
     )
     user: Mapped[Optional["User"]] = relationship("User", back_populates="identifiers")
-    chain_root_id: Mapped[Optional[int]] = mapped_column(
-        Integer,
-        ForeignKey("identifiers.id", ondelete="CASCADE"),
-        nullable=True,
-        index=True,
-    )
-    predecessor_id: Mapped[Optional[int]] = mapped_column(
-        Integer,
-        ForeignKey("identifiers.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    reservation_id: Mapped[Optional[int]] = mapped_column(
-        Integer,
-        ForeignKey("uid_reservations.id", ondelete="RESTRICT"),
-        nullable=True,
-        unique=True,
-    )
-    state: Mapped[IdentifierState] = mapped_column(
-        Enum(IdentifierState), default=IdentifierState.STATIC, index=True
-    )
-    generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    last_write_attempt_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime, nullable=True
-    )
-
-    chain_root: Mapped[Optional["Identifier"]] = relationship(
-        "Identifier",
-        remote_side="Identifier.id",
-        foreign_keys=[chain_root_id],
-        post_update=True,
-    )
-    predecessor: Mapped[Optional["Identifier"]] = relationship(
-        "Identifier",
-        remote_side="Identifier.id",
-        foreign_keys=[predecessor_id],
-    )
-    reservation: Mapped[Optional["UidReservation"]] = relationship(
-        "UidReservation", foreign_keys=[reservation_id]
+    mifare_credential: Mapped[Optional["MifareCredential"]] = relationship(
+        "MifareCredential",
+        back_populates="identifier",
+        cascade="all, delete-orphan",
+        single_parent=True,
+        uselist=False,
     )
 
     __table_args__ = (
         Index("uq_identifiers_value_lower", func.lower(value), unique=True),
-        Index(
-            "uq_identifiers_current_per_chain",
-            chain_root_id,
-            unique=True,
-            sqlite_where=(state == IdentifierState.CURRENT),
-            postgresql_where=(state == IdentifierState.CURRENT),
-        ),
     )
 
 
-class UidReservation(Base):
-    """A UID value that must never be generated again."""
+class MifareUuidState(str, enum.Enum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
 
-    __tablename__ = "uid_reservations"
+
+class MifareCredential(Base):
+    """Rolling data-block credential belonging to one legacy UID identifier."""
+
+    __tablename__ = "mifare_credentials"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    value: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    identifier_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("identifiers.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    last_verified_rotation_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+    last_write_attempt_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+    last_write_error: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    identifier: Mapped[Identifier] = relationship(
+        Identifier, back_populates="mifare_credential"
+    )
+    uuid_values: Mapped[List["MifareUuidValue"]] = relationship(
+        "MifareUuidValue",
+        back_populates="credential",
+        cascade="all, delete-orphan",
+        order_by="MifareUuidValue.created_at",
+    )
+
+
+class MifareUuidValue(Base):
+    """A pending or previously confirmed UUID accepted for a MIFARE fob."""
+
+    __tablename__ = "mifare_uuid_values"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    credential_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("mifare_credentials.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    value: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    state: Mapped[MifareUuidState] = mapped_column(
+        Enum(MifareUuidState), nullable=False, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-
-    __table_args__ = (
-        Index("uq_uid_reservations_value_lower", func.lower(value), unique=True),
-    )
-
-
-class UidRotationProtocol(str, enum.Enum):
-    UNKNOWN = "unknown"
-    GEN1A = "gen1a"
-    GEN2 = "gen2"
-
-
-class UidRotationOutcome(str, enum.Enum):
-    STARTED = "started"
-    ACKNOWLEDGED = "acknowledged"
-    UNSUPPORTED = "unsupported"
-    NAK = "nak"
-    TIMEOUT = "timeout"
-    PCSC_ERROR = "pcsc_error"
-    CONNECTION_LOSS = "connection_loss"
-    FAILED = "failed"
-
-
-class UidRotationAttempt(Base):
-    """Immutable audit record for one hardware UID-write attempt."""
-
-    __tablename__ = "uid_rotation_attempts"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    chain_root_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("identifiers.id", ondelete="CASCADE"), index=True
-    )
-    source_identifier_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("identifiers.id", ondelete="CASCADE"), index=True
-    )
-    target_reservation_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("uid_reservations.id", ondelete="RESTRICT"), index=True
-    )
-    attempted_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
-    protocol: Mapped[UidRotationProtocol] = mapped_column(
-        Enum(UidRotationProtocol), default=UidRotationProtocol.UNKNOWN
-    )
-    outcome: Mapped[UidRotationOutcome] = mapped_column(
-        Enum(UidRotationOutcome), default=UidRotationOutcome.STARTED
-    )
-    detail: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    chain_root: Mapped[Identifier] = relationship(
-        Identifier, foreign_keys=[chain_root_id]
+    credential: Mapped[MifareCredential] = relationship(
+        MifareCredential, back_populates="uuid_values"
     )
-    source_identifier: Mapped[Identifier] = relationship(
-        Identifier, foreign_keys=[source_identifier_id]
+
+    __table_args__ = (
+        Index("uq_mifare_uuid_values_value_lower", func.lower(value), unique=True),
+        Index(
+            "uq_mifare_uuid_values_pending_per_credential",
+            credential_id,
+            unique=True,
+            sqlite_where=(state == MifareUuidState.PENDING),
+            postgresql_where=(state == MifareUuidState.PENDING),
+        ),
     )
-    target_reservation: Mapped[UidReservation] = relationship(UidReservation)

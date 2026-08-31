@@ -12,7 +12,7 @@ class TestUserServiceTokens:
         user = svc.create(UserCreate(username="alice"))
         assert user.api_token_hash is None
         assert user.api_allowed_sources is None
-        assert user.uid_rotation_every_read is False
+        assert user.mifare_rotation_enabled is False
 
     def test_create_user_with_sources(self, db):
         svc = UserService(db)

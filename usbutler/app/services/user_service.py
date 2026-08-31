@@ -1,6 +1,7 @@
 """User service for database operations."""
 
 from typing import List, Optional
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -44,8 +45,7 @@ class UserService:
             username=data.username,
             status=data.status,
             api_allowed_sources=allowed_sources_csv,
-            uid_rotation_enabled=data.uid_rotation_enabled,
-            uid_rotation_every_read=data.uid_rotation_every_read,
+            mifare_rotation_enabled=data.mifare_rotation_enabled,
         )
         self.db.add(user)
         self.db.commit()
@@ -61,29 +61,11 @@ class UserService:
         user = self.get_by_id(user_id)
         if not user:
             return None
-        update_data = data.model_dump(
-            exclude_unset=True,
-            exclude={
-                "allowed_sources",
-                "uid_rotation_enabled",
-                "uid_rotation_every_read",
-            },
-        )
-        for k, v in update_data.items():
-            setattr(user, k, v)
+        update_data = data.model_dump(exclude_unset=True, exclude={"allowed_sources"})
+        for key, value in update_data.items():
+            setattr(user, key, value)
         if data.allowed_sources is not None:
             user.api_allowed_sources = allowed_sources_csv
-        if data.uid_rotation_enabled is not None:
-            from app.config import settings
-            from app.services.uid_rotation_service import UidRotationService
-
-            UidRotationService(self.db).set_user_rotation(
-                user,
-                data.uid_rotation_enabled,
-                initialize_candidates=settings.UID_ROTATION_ENABLED,
-            )
-        if data.uid_rotation_every_read is not None:
-            user.uid_rotation_every_read = data.uid_rotation_every_read
         self.db.commit()
         self.db.refresh(user)
         return user
@@ -101,19 +83,6 @@ class UserService:
         user = self.get_by_id(user_id)
         if not user:
             return False
-        from app.services.uid_rotation_service import UidRotationService
-
-        rotation = UidRotationService(self.db)
-        root_ids = {
-            identifier.chain_root_id
-            for identifier in user.identifiers
-            if identifier.chain_root_id
-        }
-        for root_id in root_ids:
-            rotation.delete_lineage(root_id)
-        user = self.get_by_id(user_id)
-        if not user:
-            return True
         self.db.delete(user)
         self.db.commit()
         return True

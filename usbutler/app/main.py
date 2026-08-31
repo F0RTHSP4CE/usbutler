@@ -16,8 +16,8 @@ from app.routers import (
 )
 from app.services.card_reader import CardReaderService
 from app.services.card_reader_polling import CardReaderPollingService
-from app.services.uid_writer import ACR122UidWriter
-from app.services.uid_rotation_service import UidRotationService
+from app.services.mifare_block import ACR122MifareBlockStore
+from app.services.mifare_rotation_service import MifareRotationService
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -25,7 +25,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 nfc_reader = NFCReader()
-card_reader_service = CardReaderService(nfc_reader)
+mifare_store = ACR122MifareBlockStore(
+    nfc_reader,
+    block_number=settings.MIFARE_DATA_BLOCK,
+    key_a=settings.MIFARE_CLASSIC_KEY_A,
+    max_attempts=settings.MIFARE_WRITE_MAX_ATTEMPTS,
+    retry_delay_seconds=settings.MIFARE_WRITE_RETRY_DELAY_SECONDS,
+)
+card_reader_service = CardReaderService(nfc_reader, mifare_store)
 
 
 @asynccontextmanager
@@ -41,8 +48,7 @@ async def lifespan(app: FastAPI):
     door_control = registry.door_control_service
 
     with create_services_for_thread() as services:
-        if settings.UID_ROTATION_ENABLED:
-            UidRotationService(services.db).initialize_enabled_users()
+        MifareRotationService(services.db).reconcile(settings.MIFARE_UUID_HISTORY_LIMIT)
         doors = services.doors.get_all()
         if doors:
             door_control.start_button_monitoring(doors)
@@ -54,12 +60,7 @@ async def lifespan(app: FastAPI):
         session_factory=create_services_for_thread,
         poll_interval=settings.CARD_READER_POLL_INTERVAL,
         default_door_id=settings.DEFAULT_DOOR_ID,
-        uid_writer=ACR122UidWriter(
-            nfc_reader,
-            settings.MIFARE_CLASSIC_KEY_A,
-            max_attempts=settings.UID_WRITE_MAX_ATTEMPTS,
-            retry_delay_seconds=settings.UID_WRITE_RETRY_DELAY_SECONDS,
-        ),
+        mifare_store=mifare_store,
     )
     registry.card_reader_polling = card_reader_polling
     card_reader_polling.start()

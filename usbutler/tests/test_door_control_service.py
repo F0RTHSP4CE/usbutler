@@ -63,7 +63,7 @@ def test_async_open_survives_caller_session_rollback(db, monkeypatch):
     function, args = executor.call
     assert isinstance(args[0], DoorSnapshot)
 
-    # This mirrors UidRotationService.prepare_write() losing the 24-hour
+    # This mirrors a rotation transaction rolling back after door submission:
     # conditional update: rollback expires the session's ORM objects, then the
     # authentication context closes before the executor necessarily runs.
     db.rollback()

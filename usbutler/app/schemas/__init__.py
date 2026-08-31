@@ -17,13 +17,11 @@ from app.schemas.door import (
     DoorEventListResponse,
 )
 from app.schemas.identifier import (
-    IdentifierLineageResponse,
     IdentifierCreate,
     IdentifierUpdate,
     IdentifierResponse,
     IdentifierWithUser,
     LastScanResponse,
-    UidRotationAttemptResponse,
 )
 
 __all__ = [
@@ -44,6 +42,4 @@ __all__ = [
     "IdentifierResponse",
     "IdentifierWithUser",
     "LastScanResponse",
-    "IdentifierLineageResponse",
-    "UidRotationAttemptResponse",
 ]

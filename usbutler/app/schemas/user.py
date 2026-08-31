@@ -1,7 +1,9 @@
 """User schemas."""
 
 from typing import List, Optional
+
 from pydantic import BaseModel, ConfigDict
+
 from app.models.user import UserStatus
 
 
@@ -9,16 +11,14 @@ class UserCreate(BaseModel):
     username: str
     status: UserStatus = UserStatus.ACTIVE
     allowed_sources: Optional[List[str]] = None
-    uid_rotation_enabled: bool = True
-    uid_rotation_every_read: bool = False
+    mifare_rotation_enabled: bool = False
 
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
     status: Optional[UserStatus] = None
     allowed_sources: Optional[List[str]] = None
-    uid_rotation_enabled: Optional[bool] = None
-    uid_rotation_every_read: Optional[bool] = None
+    mifare_rotation_enabled: Optional[bool] = None
 
 
 class IdentifierBrief(BaseModel):
@@ -26,8 +26,6 @@ class IdentifierBrief(BaseModel):
     id: int
     value: str
     type: str
-    state: str
-    chain_root_id: Optional[int] = None
 
 
 class IdentifierLookupRequest(BaseModel):
@@ -40,8 +38,7 @@ class UserResponse(BaseModel):
     username: str
     status: UserStatus
     allowed_sources: List[str] = []
-    uid_rotation_enabled: bool
-    uid_rotation_every_read: bool
+    mifare_rotation_enabled: bool
 
 
 class UserWithIdentifiers(UserResponse):

@@ -1,18 +1,18 @@
 """Identifiers API router."""
 
 from typing import List
+
 from fastapi import APIRouter, HTTPException, status
+
 from app.dependencies import ServicesDep
 from app.schemas.identifier import (
     IdentifierCreate,
-    IdentifierLineageResponse,
     IdentifierResponse,
     IdentifierUpdate,
     IdentifierWithUser,
     LastScanResponse,
 )
 from app.utils.masking import mask_identifier
-from app.services.uid_rotation_service import LineageMutationError, UidCollisionError
 
 router = APIRouter(prefix="/identifiers", tags=["identifiers"])
 
@@ -33,11 +33,7 @@ def create_identifier(identifier_data: IdentifierCreate, s: ServicesDep):
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, f"User {identifier_data.user_id} not found"
         )
-    try:
-        return s.identifiers.create(identifier_data)
-    except UidCollisionError as exc:
-        s.db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return s.identifiers.create(identifier_data)
 
 
 @router.get("/last-scan", response_model=LastScanResponse)
@@ -58,37 +54,6 @@ def get_last_scan(s: ServicesDep):
         user_id=user_id,
         username=username,
     )
-
-
-@router.get("/lineages/{root_id}", response_model=IdentifierLineageResponse)
-def get_identifier_lineage(root_id: int, s: ServicesDep):
-    if lineage := s.identifiers.get_lineage(root_id):
-        return lineage
-    raise HTTPException(status.HTTP_404_NOT_FOUND, f"UID lineage {root_id} not found")
-
-
-@router.delete("/lineages/{root_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_identifier_lineage(root_id: int, s: ServicesDep):
-    if not s.identifiers.delete_lineage(root_id):
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND, f"UID lineage {root_id} not found"
-        )
-
-
-@router.post("/lineages/{root_id}/assign/{user_id}", response_model=IdentifierWithUser)
-def assign_identifier_lineage(root_id: int, user_id: int, s: ServicesDep):
-    if not s.users.get_by_id(user_id):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {user_id} not found")
-    if identifier := s.identifiers.assign_lineage(root_id, user_id):
-        return identifier
-    raise HTTPException(status.HTTP_404_NOT_FOUND, f"UID lineage {root_id} not found")
-
-
-@router.post("/lineages/{root_id}/unassign", response_model=IdentifierWithUser)
-def unassign_identifier_lineage(root_id: int, s: ServicesDep):
-    if identifier := s.identifiers.assign_lineage(root_id, None):
-        return identifier
-    raise HTTPException(status.HTTP_404_NOT_FOUND, f"UID lineage {root_id} not found")
 
 
 @router.get("/by-value/{value}", response_model=IdentifierWithUser)
@@ -125,12 +90,8 @@ def update_identifier(
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND, f"User {identifier_data.user_id} not found"
             )
-    try:
-        if identifier := s.identifiers.update(identifier_id, identifier_data):
-            return identifier
-    except (LineageMutationError, UidCollisionError) as exc:
-        s.db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    if identifier := s.identifiers.update(identifier_id, identifier_data):
+        return identifier
     raise HTTPException(
         status.HTTP_404_NOT_FOUND, f"Identifier {identifier_id} not found"
     )
@@ -138,11 +99,7 @@ def update_identifier(
 
 @router.delete("/{identifier_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_identifier(identifier_id: int, s: ServicesDep):
-    try:
-        deleted = s.identifiers.delete(identifier_id)
-    except LineageMutationError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    if not deleted:
+    if not s.identifiers.delete(identifier_id):
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, f"Identifier {identifier_id} not found"
         )
@@ -152,11 +109,8 @@ def delete_identifier(identifier_id: int, s: ServicesDep):
 def assign_identifier_to_user(identifier_id: int, user_id: int, s: ServicesDep):
     if not s.users.get_by_id(user_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {user_id} not found")
-    try:
-        if identifier := s.identifiers.assign_to_user(identifier_id, user_id):
-            return identifier
-    except LineageMutationError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    if identifier := s.identifiers.assign_to_user(identifier_id, user_id):
+        return identifier
     raise HTTPException(
         status.HTTP_404_NOT_FOUND, f"Identifier {identifier_id} not found"
     )
@@ -164,11 +118,8 @@ def assign_identifier_to_user(identifier_id: int, user_id: int, s: ServicesDep):
 
 @router.post("/{identifier_id}/unassign", response_model=IdentifierWithUser)
 def unassign_identifier(identifier_id: int, s: ServicesDep):
-    try:
-        if identifier := s.identifiers.assign_to_user(identifier_id, None):
-            return identifier
-    except LineageMutationError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    if identifier := s.identifiers.assign_to_user(identifier_id, None):
+        return identifier
     raise HTTPException(
         status.HTTP_404_NOT_FOUND, f"Identifier {identifier_id} not found"
     )

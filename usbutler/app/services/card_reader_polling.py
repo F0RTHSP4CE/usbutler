@@ -5,20 +5,16 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
-from app.models.door_event import DoorEventType
-from app.models.identifier import IdentifierState, IdentifierType
 from app.config import settings
+from app.models.door_event import DoorEventType
+from app.models.identifier import IdentifierType
 from app.services.card_reader import CardReaderService, CardScanResult
 from app.services.door_control_service import DoorControlService, SessionFactory
-from app.services.uid_rotation_service import UidRotationService, is_rotatable_uid
-from app.services.uid_writer import (
-    ACR122UidWriter,
-    UidWriter,
-    classify_writer_exception,
-)
+from app.services.mifare_block import MifareBlockStore
+from app.services.mifare_rotation_service import MifareRotationService
 from app.utils.masking import mask_identifier
 
 logger = logging.getLogger(__name__)
@@ -32,7 +28,7 @@ class LastScan:
 
 
 class CardReaderPollingService:
-    """Polls card reader and processes scans for authentication."""
+    """Polls the card reader and processes scans for authentication."""
 
     def __init__(
         self,
@@ -41,19 +37,14 @@ class CardReaderPollingService:
         session_factory: SessionFactory,
         poll_interval: float = 1.0,
         default_door_id: int = 1,
-        uid_writer: Optional[UidWriter] = None,
+        mifare_store: Optional[MifareBlockStore] = None,
     ):
         self._reader = card_reader_service
         self._door_control = door_control_service
         self.session_factory = session_factory
         self.poll_interval = poll_interval
         self.default_door_id = default_door_id
-        self._uid_writer = uid_writer or ACR122UidWriter(
-            card_reader_service.nfc_reader,
-            settings.MIFARE_CLASSIC_KEY_A,
-            max_attempts=settings.UID_WRITE_MAX_ATTEMPTS,
-            retry_delay_seconds=settings.UID_WRITE_RETRY_DELAY_SECONDS,
-        )
+        self._mifare_store = mifare_store or card_reader_service.mifare_store
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -93,8 +84,8 @@ class CardReaderPollingService:
         while self._running:
             try:
                 self._poll_once()
-            except Exception as e:
-                logger.error(f"Card polling error: {e}")
+            except Exception as exc:
+                logger.error("Card polling error: %s", exc)
                 self._restart_pcscd()
             time.sleep(self.poll_interval)
 
@@ -108,8 +99,9 @@ class CardReaderPollingService:
             result = self._reader.read_card_data()
             value = result.identifier()
             type_str = result.identifier_type()
+            mifare_only = result.mifare_classic and result.mifare_uuid is not None
 
-            if not value or not type_str:
+            if (not value or not type_str) and not mifare_only:
                 self._consecutive_read_failures += 1
                 logger.warning(
                     "Card detected without a readable identifier (failure %s)",
@@ -122,29 +114,42 @@ class CardReaderPollingService:
 
             completed_read = True
             self._consecutive_read_failures = 0
+            if type_str:
+                try:
+                    id_type = IdentifierType(type_str)
+                except ValueError:
+                    return
+            else:
+                id_type = IdentifierType.UID
 
-            try:
-                id_type = IdentifierType(type_str)
-            except ValueError:
-                return
+            # Never publish a raw rolling UUID through the last-scan API. A
+            # UUID-only scan can still authenticate, but cannot be assigned by
+            # the legacy UID administration flow until its UID is readable.
+            if value:
+                with self._lock:
+                    self._last_scan = LastScan(
+                        value=value, type=id_type, scanned_at=datetime.now()
+                    )
 
-            with self._lock:
-                self._last_scan = LastScan(
-                    value=value, type=id_type, scanned_at=datetime.now()
-                )
-
-            # Debounce
             now = time.monotonic()
-            if value == self._last_id and (now - self._last_time) < self._debounce:
+            debounce_id = value or f"mifare:{result.mifare_uuid}"
+            if (
+                debounce_id == self._last_id
+                and (now - self._last_time) < self._debounce
+            ):
                 return
-            self._last_id = value
+            self._last_id = debounce_id
             self._last_time = now
 
-            logger.info(f"Card scanned: {id_type.value}={mask_identifier(value)}")
-            self._authenticate(value, result)
+            logger.info(
+                "Card scanned: %s=%s",
+                id_type.value,
+                mask_identifier(value or "data-uuid"),
+            )
+            self._authenticate(result)
 
-        except Exception as e:
-            logger.error(f"Card read error: {e}")
+        except Exception as exc:
+            logger.error("Card read error: %s", exc)
             self._consecutive_read_failures += 1
             if self._consecutive_read_failures >= 3:
                 restart_reader = True
@@ -156,127 +161,109 @@ class CardReaderPollingService:
             if restart_reader:
                 self._restart_pcscd()
 
-    def _authenticate(self, identifier: str, scan: CardScanResult) -> None:
+    def _authenticate(self, scan: CardScanResult) -> None:
         from app.services.auth_service import AuthService
 
-        with self.session_factory() as s:
-            auth = AuthService(s.users, s.identifiers)
-            success, user, matched_identifier, msg = auth.authenticate(identifier)
+        display_value = scan.identifier() or scan.uid or ""
+        with self.session_factory() as services:
+            auth = AuthService(services.users, services.identifiers)
+            success, user, identifier, message = auth.authenticate_card(scan)
 
-            if not success or not user or not matched_identifier:
-                logger.info(f"Auth failed for {mask_identifier(identifier)}: {msg}")
+            if not success or not user or not identifier:
+                logger.info(
+                    "Auth failed for %s: %s",
+                    mask_identifier(display_value),
+                    message,
+                )
                 return
 
-            logger.info(f"Auth OK for '{user.username}'")
-
-            door = s.doors.get_by_id(self.default_door_id)
+            logger.info("Auth OK for '%s'", user.username)
+            door = services.doors.get_by_id(self.default_door_id)
             if not door:
-                logger.error(f"Door {self.default_door_id} not found")
+                logger.error("Door %s not found", self.default_door_id)
                 return
 
-            logger.info(f"Opening door '{door.name}' for '{user.username}'")
+            # Access is authorized before any best-effort database/card mutation.
+            logger.info("Opening door '%s' for '%s'", door.name, user.username)
             self._door_control.open_door_async(
                 door, user.username, DoorEventType.CARD, user.id
             )
 
-            rotation = UidRotationService(s.db)
-            if matched_identifier.state == IdentifierState.PENDING:
-                try:
-                    promoted = rotation.promote_pending(
-                        matched_identifier.id,
-                        create_successor=(
-                            settings.UID_ROTATION_ENABLED and user.uid_rotation_enabled
-                        ),
-                    )
-                    if promoted:
-                        matched_identifier = promoted
-                        logger.info(
-                            "Confirmed a pending UID for '%s' lineage %s",
-                            user.username,
-                            promoted.chain_root_id,
-                        )
-                except Exception:
-                    s.db.rollback()
-                    logger.exception(
-                        "Failed to promote UID for '%s'; door access was preserved",
-                        user.username,
-                    )
-                    return
-
-            if not (
-                settings.UID_ROTATION_ENABLED
-                and user.uid_rotation_enabled
-                and scan.mifare_classic
-                and matched_identifier.state == IdentifierState.CURRENT
-                and is_rotatable_uid(matched_identifier.value)
-            ):
+            if not scan.mifare_classic:
                 return
 
+            rotation = MifareRotationService(services.db)
+            prepared = None
             try:
-                minimum_interval = (
-                    None if user.uid_rotation_every_read else timedelta(hours=24)
-                )
-                prepared = rotation.prepare_write(
-                    matched_identifier.id,
-                    minimum_interval=minimum_interval,
-                )
-                if not prepared:
-                    logger.info(
-                        "UID rotation skipped for '%s': 24-hour write limit is active",
-                        user.username,
-                    )
-                    return
-                logger.info(
-                    "Attempting UID rotation for '%s' lineage %s (%s policy)",
-                    user.username,
-                    prepared.chain_root_id,
-                    "every read" if user.uid_rotation_every_read else "24-hour",
-                )
-                result = self._uid_writer.write_uid(
-                    prepared.source_uid, prepared.target_uid
-                )
-                rotation.complete_attempt(
-                    prepared.attempt_id,
-                    result.protocol,
-                    result.outcome,
-                    result.detail,
-                )
-                logger.info(
-                    "UID rotation attempt for '%s': protocol=%s outcome=%s",
-                    user.username,
-                    result.protocol.value,
-                    result.outcome.value,
-                )
-            except Exception as exc:
-                s.db.rollback()
-                logger.exception(
-                    "UID rotation failed for '%s'; door access was preserved",
-                    user.username,
-                )
-                if "prepared" in locals() and prepared:
-                    try:
-                        from app.models.identifier import UidRotationProtocol
+                if scan.mifare_uuid and rotation.confirm_observed(
+                    identifier.id,
+                    scan.mifare_uuid,
+                    settings.MIFARE_UUID_HISTORY_LIMIT,
+                ):
+                    logger.info("Confirmed pending MIFARE UUID for '%s'", user.username)
 
-                        rotation.complete_attempt(
-                            prepared.attempt_id,
-                            UidRotationProtocol.UNKNOWN,
-                            classify_writer_exception(exc),
-                            str(exc),
-                        )
+                if not (
+                    settings.MIFARE_DATA_ROTATION_ENABLED
+                    and user.mifare_rotation_enabled
+                    and self._mifare_store is not None
+                ):
+                    return
+
+                prepared = rotation.prepare_write(identifier.id)
+                if not prepared:
+                    return
+
+                result = self._mifare_store.write_and_verify(
+                    prepared.target_uuid, expected_uid=scan.uid
+                )
+                rotation.record_attempt(
+                    prepared.credential_id,
+                    None if result.verified else result.detail,
+                )
+                if result.verified:
+                    rotation.confirm_observed(
+                        identifier.id,
+                        prepared.target_uuid,
+                        settings.MIFARE_UUID_HISTORY_LIMIT,
+                    )
+                    logger.info(
+                        "Verified MIFARE UUID rotation for '%s' after %s attempt(s)",
+                        user.username,
+                        result.attempts,
+                    )
+                else:
+                    logger.warning(
+                        "MIFARE UUID rotation remains pending for '%s': %s",
+                        user.username,
+                        result.detail,
+                    )
+            except Exception as exc:
+                services.db.rollback()
+                logger.exception(
+                    "MIFARE UUID rotation failed for '%s'; door access was preserved",
+                    user.username,
+                )
+                if prepared is not None:
+                    try:
+                        rotation.record_attempt(prepared.credential_id, str(exc))
                     except Exception:
-                        logger.exception("Failed to persist UID rotation failure")
+                        logger.exception("Failed to persist MIFARE write failure")
 
     def _restart_pcscd(self) -> None:
         try:
             result = subprocess.run(
-                ["supervisorctl", "restart", "pcscd"], capture_output=True, timeout=10
+                ["supervisorctl", "restart", "pcscd"],
+                capture_output=True,
+                timeout=10,
             )
             if result.returncode == 0:
                 time.sleep(2.0)
                 return
             subprocess.run(
-                ["systemctl", "restart", "pcscd"], capture_output=True, timeout=10
+                ["systemctl", "restart", "pcscd"],
+                capture_output=True,
+                timeout=10,
             )
             time.sleep(2.0)
-        except Exception as e:
-            logger.warning(f"pcscd restart failed: {e}")
+        except Exception as exc:
+            logger.warning("pcscd restart failed: %s", exc)

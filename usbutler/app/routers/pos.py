@@ -4,7 +4,6 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.dependencies import ServicesDepPOS
 from app.schemas.user import IdentifierLookupRequest, UserResponse
-from app.models.identifier import IdentifierState
 
 router = APIRouter(prefix="/pos", tags=["pos"])
 
@@ -13,11 +12,7 @@ router = APIRouter(prefix="/pos", tags=["pos"])
 def get_user_by_identifier(payload: IdentifierLookupRequest, s: ServicesDepPOS):
     """Look up a user by identifier value. Requires X-POS-Secret header."""
     identifier = s.identifiers.get_by_value(payload.value)
-    if (
-        not identifier
-        or not identifier.user
-        or identifier.state not in {IdentifierState.STATIC, IdentifierState.CURRENT}
-    ):
+    if not identifier or not identifier.user:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             "No user found for submitted identifier",

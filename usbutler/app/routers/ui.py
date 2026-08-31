@@ -70,24 +70,11 @@ async def index(
         if last_scan:
             last_scan_identifier = s.identifiers.get_by_value(last_scan["value"])
 
-    root_ids = {
-        identifier.chain_root_id
-        for user in users
-        for identifier in user.identifiers
-        if identifier.chain_root_id
-    }
-    lineages = {
-        root_id: lineage
-        for root_id in root_ids
-        if (lineage := s.identifiers.get_lineage(root_id)) is not None
-    }
-
     response = templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "users": users,
-            "lineages": lineages,
             "last_scan": last_scan,
             "last_scan_identifier": last_scan_identifier,
             "auth_enabled": bool(settings.ADMIN_PASSWORD),

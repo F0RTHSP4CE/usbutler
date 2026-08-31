@@ -28,24 +28,29 @@ optional:
 - emv (bank, apple pay)
 - ntag
 
-## rotating mifare uids
+## rotating mifare data credentials
 
-UID rotation is available for 4-byte Gen1A and Gen2/CUID ("magic") MIFARE
-Classic cards. Genuine MIFARE manufacturer blocks are read-only; those cards
-continue to open the door with their confirmed UID while write attempts
-fail safely.
+Opted-in MIFARE Classic fobs store a UUIDv4 in a dedicated 16-byte data block.
+The immutable card UID bootstraps old fobs, but is no longer accepted after the
+first data UUID has been verified. Current and recent UUIDs remain valid so an
+uncertain write cannot lock out a user.
 
-- Existing users start with rotation disabled after migration.
-- New users start with rotation enabled and can be changed in the admin UI.
-- `UID_ROTATION_ENABLED` is the global kill switch.
-- Each user may keep the default rolling 24-hour write limit or enable
-  **every read** in the admin UI to attempt a write on every distinct card
-  presentation.
-- `UID_WRITE_MAX_ATTEMPTS` bounds transient hardware retries (default `3`), and
-  `UID_WRITE_RETRY_DELAY_SECONDS` controls the delay between them (default
-  `0.15`). Explicit NAK and unsupported/read-only results are not retried.
-- `MIFARE_CLASSIC_KEY_A` configures the Gen2 sector-0 key (default
+- Rotation is disabled by default for every user and can be enabled in the
+  admin UI.
+- `MIFARE_DATA_ROTATION_ENABLED` is the global write kill switch. Disabling it
+  does not restore UID fallback for already enrolled cards.
+- `MIFARE_DATA_BLOCK` selects the dedicated data block (default `4`). Never use
+  block 0 or a sector trailer, and reserve the selected block for USButler.
+- `MIFARE_UUID_HISTORY_LIMIT` controls confirmed UUID retention (default `3`).
+- Successful, read-back-verified rotation is limited to once per rolling 24
+  hours. An unconfirmed pending target is retried on later presentations.
+- `MIFARE_WRITE_MAX_ATTEMPTS` and `MIFARE_WRITE_RETRY_DELAY_SECONDS` bound
+  same-presentation retries (defaults `3` and `0.15`).
+- `MIFARE_CLASSIC_KEY_A` configures data-sector Key A (factory default
   `FFFFFFFFFFFF`) and belongs in `.env.secrets`.
+
+This invalidates stale UID-only copies; it is not cryptographic proof of card
+authenticity. A readable MIFARE Classic data block can itself be copied.
 
 ## unsupported (!) cards
 - google pay (work in progress (actually no))
