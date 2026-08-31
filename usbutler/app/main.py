@@ -4,7 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.config import settings
-from app.database import init_db
+from app.migrations import run_migrations
 from app.dependencies import create_services_for_thread, get_registry
 from app.emv.nfc_reader import NFCReader
 from app.routers import (
@@ -16,6 +16,8 @@ from app.routers import (
 )
 from app.services.card_reader import CardReaderService
 from app.services.card_reader_polling import CardReaderPollingService
+from app.services.uid_writer import ACR122UidWriter
+from app.services.uid_rotation_service import UidRotationService
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -29,12 +31,14 @@ card_reader_service = CardReaderService(nfc_reader)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting usbutler...")
-    init_db()
+    run_migrations()
 
     registry = get_registry()
     door_control = registry.door_control_service
 
     with create_services_for_thread() as services:
+        if settings.UID_ROTATION_ENABLED:
+            UidRotationService(services.db).initialize_enabled_users()
         doors = services.doors.get_all()
         if doors:
             door_control.start_button_monitoring(doors)
@@ -46,6 +50,7 @@ async def lifespan(app: FastAPI):
         session_factory=create_services_for_thread,
         poll_interval=settings.CARD_READER_POLL_INTERVAL,
         default_door_id=settings.DEFAULT_DOOR_ID,
+        uid_writer=ACR122UidWriter(nfc_reader, settings.MIFARE_CLASSIC_KEY_A),
     )
     registry.card_reader_polling = card_reader_polling
     card_reader_polling.start()

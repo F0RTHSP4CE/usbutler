@@ -60,19 +60,34 @@ async def logout():
 
 @router.get("/", response_class=HTMLResponse)
 async def index(
-    request: Request, s: ServicesDepUI,
+    request: Request,
+    s: ServicesDepUI,
 ):
+    users = s.users.get_all()
     last_scan, last_scan_identifier = None, None
     if s.card_reader_polling:
         last_scan = s.card_reader_polling.get_last_scan()
         if last_scan:
             last_scan_identifier = s.identifiers.get_by_value(last_scan["value"])
 
+    root_ids = {
+        identifier.chain_root_id
+        for user in users
+        for identifier in user.identifiers
+        if identifier.chain_root_id
+    }
+    lineages = {
+        root_id: lineage
+        for root_id in root_ids
+        if (lineage := s.identifiers.get_lineage(root_id)) is not None
+    }
+
     response = templates.TemplateResponse(
         "index.html",
         {
             "request": request,
-            "users": s.users.get_all(),
+            "users": users,
+            "lineages": lineages,
             "last_scan": last_scan,
             "last_scan_identifier": last_scan_identifier,
             "auth_enabled": bool(settings.ADMIN_PASSWORD),
@@ -84,7 +99,8 @@ async def index(
 
 @router.get("/doors", response_class=HTMLResponse)
 async def doors_page(
-    request: Request, s: ServicesDepUI,
+    request: Request,
+    s: ServicesDepUI,
 ):
     events, _ = s.door_events.get_history(page=1, page_size=20)
     history = []

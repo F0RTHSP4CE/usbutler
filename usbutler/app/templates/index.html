@@ -39,7 +39,7 @@
             <option value="{{ user.id }}">{{ user.username }}</option>
             {% endfor %}
         </select>
-        <button onclick="assignExisting({{ last_scan_identifier.id }})">Assign</button>
+        <button onclick="assignExisting({{ last_scan_identifier.id }}, {{ last_scan_identifier.chain_root_id or 'null' }})">Assign</button>
     </div>
     {% endif %}
     {% else %}
@@ -75,6 +75,7 @@
             <th>ID</th>
             <th>Username</th>
             <th>Status</th>
+            <th>UID Rotation</th>
             <th>Identifiers</th>
             <th>API Token</th>
             <th>Allowed Sources</th>
@@ -90,9 +91,38 @@
                     <option value="inactive" {% if user.status.value=='inactive' %}selected{% endif %}>inactive</option>
                 </select>
             </td>
+            <td>
+                <label>
+                    <input type="checkbox"
+                           {% if user.uid_rotation_enabled %}checked{% endif %}
+                           onchange="updateUidRotation({{ user.id }}, this.checked)">
+                    {% if user.uid_rotation_enabled %}enabled{% else %}disabled{% endif %}
+                </label>
+            </td>
             <td class="wrap">
                 {% for ident in user.identifiers %}
-                <span class="ident-item">{{ ident.type.value }}:{{ mask_id(ident.value) }} <button onclick="deleteIdentifier({{ ident.id }})">[x]</button></span>
+                <span class="ident-item">
+                    {{ ident.type.value }}:{{ mask_id(ident.value) }}
+                    {% if ident.chain_root_id %}
+                    <small>[{{ ident.state.value }} · root {{ ident.chain_root_id }}{% if ident.predecessor_id %} ← {{ ident.predecessor_id }}{% endif %}]</small>
+                    {% if ident.id == ident.chain_root_id %}
+                    <button onclick="deleteLineage({{ ident.chain_root_id }})">[x chain]</button>
+                    {% set lineage = lineages.get(ident.chain_root_id) %}
+                    {% if lineage and lineage.attempts %}
+                    {% set attempt = lineage.attempts[0] %}
+                    <small>
+                        [last attempt {{ attempt.attempted_at.strftime('%Y-%m-%d %H:%M') }} ·
+                        {{ attempt.protocol.value }} · {{ attempt.outcome.value }}]
+                    </small>
+                    {% else %}
+                    <small>[not written yet]</small>
+                    {% endif %}
+                    {% endif %}
+                    {% else %}
+                    <small>[static]</small>
+                    <button onclick="deleteIdentifier({{ ident.id }})">[x]</button>
+                    {% endif %}
+                </span>
                 {% else %}
                 -
                 {% endfor %}
@@ -121,7 +151,7 @@
         </tr>
         {% else %}
         <tr>
-            <td colspan="7">No users</td>
+            <td colspan="8">No users</td>
         </tr>
         {% endfor %}
     </table>
@@ -146,6 +176,16 @@
         } catch (e) { showAlert(e.message, 'danger'); }
     }
 
+    async function updateUidRotation(userId, enabled) {
+        try {
+            await api('PATCH', `/users/${userId}`, { uid_rotation_enabled: enabled });
+            location.reload();
+        } catch (e) {
+            showAlert(e.message, 'danger');
+            location.reload();
+        }
+    }
+
     async function deleteUser(userId) {
         if (!confirm('Delete user?')) return;
         try {
@@ -158,6 +198,14 @@
         if (!confirm('Delete identifier?')) return;
         try {
             await api('DELETE', `/identifiers/${id}`);
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function deleteLineage(rootId) {
+        if (!confirm('Delete this complete UID lineage and its audit history?')) return;
+        try {
+            await api('DELETE', `/identifiers/lineages/${rootId}`);
             location.reload();
         } catch (e) { showAlert(e.message, 'danger'); }
     }
@@ -185,11 +233,14 @@
         } catch (e) { showAlert(e.message, 'danger'); }
     }
 
-    async function assignExisting(identId) {
+    async function assignExisting(identId, rootId) {
         const userId = document.getElementById('assignUserId').value;
         if (!userId) { showAlert('Select user', 'danger'); return; }
         try {
-            await api('POST', `/identifiers/${identId}/assign/${userId}`);
+            const path = rootId
+                ? `/identifiers/lineages/${rootId}/assign/${userId}`
+                : `/identifiers/${identId}/assign/${userId}`;
+            await api('POST', path);
             location.reload();
         } catch (e) { showAlert(e.message, 'danger'); }
     }

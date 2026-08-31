@@ -8,9 +8,12 @@ from smartcard.util import toHexString
 from app.emv.nfc_reader import NFCReader
 
 # Known Mifare/NTAG ATR prefixes (contactless-only tags)
-CONTACTLESS_ATR_PREFIXES = (
+MIFARE_CLASSIC_ATR_PREFIXES = (
     "3B8F8001804F0CA000000306030001",  # Mifare Classic 1K
     "3B8F8001804F0CA000000306030002",  # Mifare Classic 4K
+)
+
+CONTACTLESS_ATR_PREFIXES = MIFARE_CLASSIC_ATR_PREFIXES + (
     "3B8F8001804F0CA000000306030003",  # Mifare Ultralight
     "3B8F8001804F0CA000000306030031",  # NTAG213
     "3B8F8001804F0CA000000306030032",  # NTAG215
@@ -82,6 +85,8 @@ class CardScanResult:
     pan: Optional[str] = None
     uid: Optional[str] = None
     tokenized: bool = False
+    atr: str = ""
+    mifare_classic: bool = False
     identifiers: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
     def identifier(self) -> Optional[str]:
@@ -113,7 +118,11 @@ class CardReaderService:
 
         atr = self._get_atr_hex()
         uid = self._get_uid()
-        result = CardScanResult(uid=uid)
+        result = CardScanResult(
+            uid=uid,
+            atr=atr,
+            mifare_classic=any(atr.startswith(p) for p in MIFARE_CLASSIC_ATR_PREFIXES),
+        )
 
         # Fast path: contactless-only tags (Mifare, NTAG) - just use UID
         if any(atr.startswith(p) for p in CONTACTLESS_ATR_PREFIXES):

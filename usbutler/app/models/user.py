@@ -2,7 +2,7 @@
 
 import enum
 from typing import TYPE_CHECKING, List, Optional
-from sqlalchemy import String, Enum
+from sqlalchemy import Boolean, String, Enum, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -28,6 +28,9 @@ class User(Base):
     )
     api_allowed_sources: Mapped[Optional[str]] = mapped_column(
         String(500), nullable=True, default=None
+    )
+    uid_rotation_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true()
     )
     identifiers: Mapped[List["Identifier"]] = relationship(
         "Identifier", back_populates="user", cascade="all, delete-orphan"

@@ -9,12 +9,14 @@ class UserCreate(BaseModel):
     username: str
     status: UserStatus = UserStatus.ACTIVE
     allowed_sources: Optional[List[str]] = None
+    uid_rotation_enabled: bool = True
 
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
     status: Optional[UserStatus] = None
     allowed_sources: Optional[List[str]] = None
+    uid_rotation_enabled: Optional[bool] = None
 
 
 class IdentifierBrief(BaseModel):
@@ -22,6 +24,8 @@ class IdentifierBrief(BaseModel):
     id: int
     value: str
     type: str
+    state: str
+    chain_root_id: Optional[int] = None
 
 
 class IdentifierLookupRequest(BaseModel):
@@ -34,6 +38,7 @@ class UserResponse(BaseModel):
     username: str
     status: UserStatus
     allowed_sources: List[str] = []
+    uid_rotation_enabled: bool
 
 
 class UserWithIdentifiers(UserResponse):

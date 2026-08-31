@@ -7,6 +7,13 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Settings:
     """Application settings from environment variables."""
 
@@ -19,6 +26,11 @@ class Settings:
 
     CARD_READER_POLL_INTERVAL = float(os.getenv("CARD_READER_POLL_INTERVAL", "1"))
     DEFAULT_DOOR_ID = int(os.getenv("DEFAULT_DOOR_ID", "1"))
+
+    UID_ROTATION_ENABLED = _env_bool("UID_ROTATION_ENABLED", True)
+    MIFARE_CLASSIC_KEY_A = (
+        os.getenv("MIFARE_CLASSIC_KEY_A", "FFFFFFFFFFFF").replace(" ", "").upper()
+    )
 
     BUTTON_DEBOUNCE_TIME = float(os.getenv("BUTTON_DEBOUNCE_TIME", "3"))
 

@@ -11,6 +11,7 @@ from app.schemas.user import (
     TokenResponse,
 )
 from app.services.api_token_service import generate_token, hash_token
+from app.services.uid_rotation_service import UidCollisionError
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -60,10 +61,14 @@ def update_user(user_id: int, user_data: UserUpdate, s: ServicesDep):
             raise HTTPException(
                 status.HTTP_409_CONFLICT, f"Username '{user_data.username}' exists"
             )
-    if user := s.users.update(
-        user_id, user_data, _sources_to_csv(user_data.allowed_sources)
-    ):
-        return _user_response(user)
+    try:
+        if user := s.users.update(
+            user_id, user_data, _sources_to_csv(user_data.allowed_sources)
+        ):
+            return _user_response(user)
+    except UidCollisionError as exc:
+        s.db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {user_id} not found")
 
 
@@ -103,5 +108,6 @@ def _user_response(user) -> dict:
         "username": user.username,
         "status": user.status,
         "allowed_sources": sources,
+        "uid_rotation_enabled": user.uid_rotation_enabled,
         "identifiers": list(user.identifiers) if hasattr(user, "identifiers") else [],
     }

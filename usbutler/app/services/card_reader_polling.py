@@ -6,12 +6,19 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Optional
 
 from app.models.door_event import DoorEventType
-from app.models.identifier import IdentifierType
-from app.services.card_reader import CardReaderService
+from app.models.identifier import IdentifierState, IdentifierType
+from app.config import settings
+from app.services.card_reader import CardReaderService, CardScanResult
 from app.services.door_control_service import DoorControlService, SessionFactory
+from app.services.uid_rotation_service import UidRotationService, is_rotatable_uid
+from app.services.uid_writer import (
+    ACR122UidWriter,
+    UidWriter,
+    classify_writer_exception,
+)
 from app.utils.masking import mask_identifier
 
 logger = logging.getLogger(__name__)
@@ -34,12 +41,16 @@ class CardReaderPollingService:
         session_factory: SessionFactory,
         poll_interval: float = 1.0,
         default_door_id: int = 1,
+        uid_writer: Optional[UidWriter] = None,
     ):
         self._reader = card_reader_service
         self._door_control = door_control_service
         self.session_factory = session_factory
         self.poll_interval = poll_interval
         self.default_door_id = default_door_id
+        self._uid_writer = uid_writer or ACR122UidWriter(
+            card_reader_service.nfc_reader, settings.MIFARE_CLASSIC_KEY_A
+        )
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -49,6 +60,8 @@ class CardReaderPollingService:
         self._last_id: Optional[str] = None
         self._last_time: float = 0
         self._debounce = 3.0
+        self._last_open_chain: Optional[int] = None
+        self._last_open_time: float = 0
 
     def start(self) -> None:
         if self._running:
@@ -113,7 +126,7 @@ class CardReaderPollingService:
             self._last_time = now
 
             logger.info(f"Card scanned: {id_type.value}={mask_identifier(value)}")
-            self._authenticate(value)
+            self._authenticate(value, result)
 
         except Exception as e:
             logger.error(f"Card read error: {e}")
@@ -121,14 +134,14 @@ class CardReaderPollingService:
             self._reader.disconnect()
             self._restart_pcscd()
 
-    def _authenticate(self, identifier: str) -> None:
+    def _authenticate(self, identifier: str, scan: CardScanResult) -> None:
         from app.services.auth_service import AuthService
 
         with self.session_factory() as s:
             auth = AuthService(s.users, s.identifiers)
-            success, user, _, msg = auth.authenticate(identifier)
+            success, user, matched_identifier, msg = auth.authenticate(identifier)
 
-            if not success or not user:
+            if not success or not user or not matched_identifier:
                 logger.info(f"Auth failed for {mask_identifier(identifier)}: {msg}")
                 return
 
@@ -139,12 +152,90 @@ class CardReaderPollingService:
                 logger.error(f"Door {self.default_door_id} not found")
                 return
 
-            logger.info(f"Opening door '{door.name}' for '{user.username}'")
-            # Use blocking call since we're already in a background thread
-            # and the door object will be detached after session closes
-            self._door_control.open_door_blocking(
-                door, user.username, DoorEventType.CARD, user.id
+            chain_key = matched_identifier.chain_root_id or -matched_identifier.id
+            now = time.time()
+            duplicate_presentation = (
+                chain_key == self._last_open_chain
+                and (now - self._last_open_time) < self._debounce
             )
+            if not duplicate_presentation:
+                logger.info(f"Opening door '{door.name}' for '{user.username}'")
+                self._door_control.open_door_async(
+                    door, user.username, DoorEventType.CARD, user.id
+                )
+                self._last_open_chain = chain_key
+                self._last_open_time = now
+
+            rotation = UidRotationService(s.db)
+            if matched_identifier.state == IdentifierState.PENDING:
+                try:
+                    promoted = rotation.promote_pending(
+                        matched_identifier.id,
+                        create_successor=(
+                            settings.UID_ROTATION_ENABLED and user.uid_rotation_enabled
+                        ),
+                    )
+                    if promoted:
+                        matched_identifier = promoted
+                        logger.info(
+                            "Confirmed a pending UID for '%s' lineage %s",
+                            user.username,
+                            promoted.chain_root_id,
+                        )
+                except Exception:
+                    s.db.rollback()
+                    logger.exception(
+                        "Failed to promote UID for '%s'; door access was preserved",
+                        user.username,
+                    )
+                    return
+
+            if not (
+                settings.UID_ROTATION_ENABLED
+                and user.uid_rotation_enabled
+                and scan.mifare_classic
+                and matched_identifier.state == IdentifierState.CURRENT
+                and is_rotatable_uid(matched_identifier.value)
+            ):
+                return
+
+            try:
+                prepared = rotation.prepare_write(matched_identifier.id)
+                if not prepared:
+                    return
+                result = self._uid_writer.write_uid(
+                    prepared.source_uid, prepared.target_uid
+                )
+                rotation.complete_attempt(
+                    prepared.attempt_id,
+                    result.protocol,
+                    result.outcome,
+                    result.detail,
+                )
+                logger.info(
+                    "UID rotation attempt for '%s': protocol=%s outcome=%s",
+                    user.username,
+                    result.protocol.value,
+                    result.outcome.value,
+                )
+            except Exception as exc:
+                s.db.rollback()
+                logger.exception(
+                    "UID rotation failed for '%s'; door access was preserved",
+                    user.username,
+                )
+                if "prepared" in locals() and prepared:
+                    try:
+                        from app.models.identifier import UidRotationProtocol
+
+                        rotation.complete_attempt(
+                            prepared.attempt_id,
+                            UidRotationProtocol.UNKNOWN,
+                            classify_writer_exception(exc),
+                            str(exc),
+                        )
+                    except Exception:
+                        logger.exception("Failed to persist UID rotation failure")
 
     def _restart_pcscd(self) -> None:
         try:

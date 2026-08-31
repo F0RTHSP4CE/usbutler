@@ -9,6 +9,8 @@ from app.services.notification_service import NotificationService
 from app.services.auth_service import AuthService
 from app.services.card_reader_polling import CardReaderPollingService
 from app.services.api_token_service import generate_token, hash_token
+from app.services.uid_rotation_service import UidRotationService
+from app.services.uid_writer import ACR122UidWriter, UidWriter, UidWriteResult
 
 __all__ = [
     "UserService",
@@ -21,4 +23,8 @@ __all__ = [
     "CardReaderPollingService",
     "generate_token",
     "hash_token",
+    "UidRotationService",
+    "ACR122UidWriter",
+    "UidWriter",
+    "UidWriteResult",
 ]

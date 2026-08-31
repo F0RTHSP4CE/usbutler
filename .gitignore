@@ -5,6 +5,7 @@ venv/
 # python
 *.pyc
 __pycache__/
+usbutler/data/*.db
 *.pyo
 *.pyd
 .Python

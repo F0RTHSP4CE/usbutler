@@ -2,7 +2,7 @@
 
 from typing import Optional, Tuple
 
-from app.models.identifier import Identifier
+from app.models.identifier import Identifier, IdentifierState
 from app.models.user import User, UserStatus
 
 
@@ -20,6 +20,9 @@ class AuthService:
         identifier = self.identifiers.get_by_value(identifier_value)
         if not identifier:
             return False, None, None, "Unknown identifier"
+
+        if identifier.state == IdentifierState.RETIRED:
+            return False, None, identifier, "Retired identifier"
 
         if not identifier.user_id:
             return False, None, identifier, "Identifier not assigned"
