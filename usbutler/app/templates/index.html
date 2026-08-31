@@ -89,7 +89,15 @@
         {% for user in users %}
         <tr{% if user.status.value == 'inactive' %} class="user-inactive"{% endif %}>
             <td>{{ user.id }}</td>
-            <td>{{ user.username }}</td>
+            <td>
+                <div class="inline-group">
+                    <input class="username-input" id="username-{{ user.id }}"
+                           value="{{ user.username }}"
+                           aria-label="Username for user {{ user.id }}"
+                           onkeydown="if (event.key === 'Enter') updateUsername({{ user.id }})">
+                    <button onclick="updateUsername({{ user.id }})">save</button>
+                </div>
+            </td>
             <td>
                 <select onchange="updateStatus({{ user.id }}, this.value)">
                     <option value="active" {% if user.status.value=='active' %}selected{% endif %}>active</option>
@@ -176,6 +184,20 @@
     async function updateStatus(userId, status) {
         try {
             await api('PATCH', `/users/${userId}`, { status });
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function updateUsername(userId) {
+        const input = document.getElementById(`username-${userId}`);
+        const username = input.value.trim();
+        if (!username) {
+            showAlert('Username cannot be empty', 'danger');
+            input.focus();
+            return;
+        }
+        try {
+            await api('PATCH', `/users/${userId}`, { username });
             location.reload();
         } catch (e) { showAlert(e.message, 'danger'); }
     }

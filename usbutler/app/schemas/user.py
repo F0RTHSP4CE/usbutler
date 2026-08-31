@@ -3,20 +3,24 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.user import UserStatus
 
 
 class UserCreate(BaseModel):
-    username: str
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    username: str = Field(min_length=1, max_length=100)
     status: UserStatus = UserStatus.ACTIVE
     allowed_sources: Optional[List[str]] = None
     mifare_rotation_enabled: bool = False
 
 
 class UserUpdate(BaseModel):
-    username: Optional[str] = None
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    username: Optional[str] = Field(default=None, min_length=1, max_length=100)
     status: Optional[UserStatus] = None
     allowed_sources: Optional[List[str]] = None
     mifare_rotation_enabled: Optional[bool] = None
