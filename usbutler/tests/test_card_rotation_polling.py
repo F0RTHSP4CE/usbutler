@@ -233,9 +233,7 @@ def test_unknown_card_sends_masked_security_notification(db):
     )
 
     assert events == ["notify"]
-    assert len(notifications.messages) == 1
-    assert "Unknown card" in notifications.messages[0]
-    assert "DE..EF" in notifications.messages[0]
+    assert notifications.messages == ["⚠️ Unknown card · DENIED · DE..EF · unknown"]
 
 
 def test_disabled_user_sends_notification_and_does_not_open(db):
@@ -253,9 +251,7 @@ def test_disabled_user_sends_notification_and_does_not_open(db):
     polling._authenticate(scan())
 
     assert events == ["notify"]
-    assert "Disabled user attempted access" in notifications.messages[0]
-    assert "alice" in notifications.messages[0]
-    assert "Access: <b>denied</b>" in notifications.messages[0]
+    assert notifications.messages == ["⚠️ Disabled user · DENIED · 01..04 · alice"]
 
 
 def test_enrolled_card_with_wrong_uuid_sends_notification(db):
@@ -276,15 +272,12 @@ def test_enrolled_card_with_wrong_uuid_sends_notification(db):
     polling._authenticate(scan(data_uuid=wrong_uuid))
 
     assert events == []
-    assert "without a recognized current or recent data UUID" in (
-        notifications.messages[0]
-    )
+    assert notifications.messages == ["⚠️ Wrong/missing UUID · DENIED · 01..04 · alice"]
     assert wrong_uuid not in notifications.messages[0]
-    assert "Data UUID: <b>unrecognized</b>" in notifications.messages[0]
     assert identifier.last_used_at is None
 
 
-def test_uid_uuid_owner_mismatch_opens_then_sends_one_notification(db):
+def test_granted_uid_uuid_owner_mismatch_does_not_notify(db):
     _, identifier, services = setup_access(db)
     users = UserService(db)
     identifiers = IdentifierService(db)
@@ -309,14 +302,8 @@ def test_uid_uuid_owner_mismatch_opens_then_sends_one_notification(db):
 
     polling._authenticate(mismatched_scan)
 
-    assert events == ["open", "notify"]
-    message = notifications.messages[0]
-    assert "does not correspond" in message
-    assert "Access: <b>granted</b>" in message
-    assert "Authentication user: <b>alice</b>" in message
-    assert "UID owner: <b>bob</b>" in message
-    assert "Data UUID owner: <b>alice</b>" in message
-    assert prepared.target_uuid not in message
+    assert events == ["open"]
+    assert notifications.messages == []
 
 
 def test_admin_ui_has_opt_in_checkbox_without_raw_uuid_history(db):

@@ -275,7 +275,7 @@ class CardReaderPollingService:
     def _notify_auth_anomalies(
         self, decision: "CardAuthResult", scan: CardScanResult
     ) -> None:
-        if not decision.anomalies:
+        if decision.success or not decision.anomalies:
             return
 
         try:
@@ -285,45 +285,16 @@ class CardReaderPollingService:
 
                 notification_service = get_registry().notification_service
 
-            access = "granted" if decision.success else "denied"
             observed_identifier = (
                 scan.uid if scan.mifare_classic else scan.identifier() or scan.uid
             )
-            lines = [
-                "⚠️ <b>Card access anomaly</b>",
-                "Reasons:",
-                *[f"• {escape(anomaly.value)}" for anomaly in decision.anomalies],
-                f"Access: <b>{access}</b>",
-                "Observed identifier: "
-                f"<code>{escape(mask_identifier(observed_identifier) or 'unreadable')}</code>",
-            ]
-
-            if scan.mifare_classic:
-                if decision.uuid_identifier:
-                    data_status = "recognized"
-                elif scan.mifare_uuid:
-                    data_status = "unrecognized"
-                elif scan.mifare_read_error:
-                    data_status = "unreadable"
-                else:
-                    data_status = "missing or invalid"
-                lines.append(f"Data UUID: <b>{data_status}</b>")
-
-            if decision.user:
-                lines.append(
-                    f"Authentication user: <b>{escape(decision.user.username)}</b>"
-                )
-
-            uid_user = decision.uid_identifier.user if decision.uid_identifier else None
-            uuid_user = (
-                decision.uuid_identifier.user if decision.uuid_identifier else None
+            reason = "; ".join(anomaly.value for anomaly in decision.anomalies)
+            identifier = mask_identifier(observed_identifier) or "unreadable"
+            username = decision.user.username if decision.user else "unknown"
+            notification_service.notify_security_alert_async(
+                f"⚠️ {escape(reason)} · DENIED · {escape(identifier)} · "
+                f"{escape(username)}"
             )
-            if uid_user and (not decision.user or uid_user.id != decision.user.id):
-                lines.append(f"UID owner: <b>{escape(uid_user.username)}</b>")
-            if uuid_user and uid_user and uuid_user.id != uid_user.id:
-                lines.append(f"Data UUID owner: <b>{escape(uuid_user.username)}</b>")
-
-            notification_service.notify_security_alert_async("\n".join(lines))
         except Exception:
             logger.exception("Failed to send card access anomaly notification")
 

@@ -120,7 +120,7 @@ def test_legacy_uid_authenticates_until_first_confirmation(db):
     )
     assert pending_result[0] is True
     assert pending_result[2].id == identifier.id
-    assert pending_result.anomalies == (CardAuthAnomaly.UID_UUID_MISMATCH,)
+    assert pending_result.anomalies == ()
 
     MifareRotationService(db).confirm_observed(identifier.id, prepared.target_uuid, 3)
     strict_result = auth.authenticate_card(mifare_scan(data_uuid=None))
@@ -141,7 +141,7 @@ def test_known_uuid_wins_over_hardware_uid(db):
 
     assert result[0] is True
     assert result[2].id == identifier.id
-    assert result.anomalies == (CardAuthAnomaly.UID_UUID_MISMATCH,)
+    assert result.anomalies == ()
 
 
 def test_previous_confirmed_uuid_remains_accepted(db):
@@ -231,7 +231,18 @@ def test_known_uuid_reports_different_registered_uid_owner(db):
     assert result.user.id == alice.id
     assert result.uid_identifier.id == bob_identifier.id
     assert result.uuid_identifier.id == identifier.id
-    assert result.anomalies == (CardAuthAnomaly.UID_UUID_MISMATCH,)
+    assert result.anomalies == ()
+
+
+def test_unrecognized_uuid_on_legacy_card_is_not_an_anomaly(db):
+    users, identifiers, _, _ = create_fob(db)
+
+    result = AuthService(users, identifiers).authenticate_card(
+        mifare_scan(data_uuid="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    )
+
+    assert result.success is True
+    assert result.anomalies == ()
 
 
 def test_non_mifare_pan_authentication_is_unchanged(db):

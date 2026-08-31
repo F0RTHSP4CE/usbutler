@@ -16,15 +16,12 @@ class CardAuthAnomaly(str, Enum):
     """Security-relevant conditions observed during card authentication."""
 
     UNKNOWN_CARD = "Unknown card"
-    DISABLED_USER = "Disabled user attempted access"
-    ENROLLED_UUID_REJECTED = (
-        "Enrolled card used without a recognized current or recent data UUID"
-    )
-    UID_UUID_MISMATCH = "UID does not correspond to the recognized data UUID"
-    UNRECOGNIZED_DATA_UUID = "Unrecognized data UUID found on a legacy card"
-    UID_UNREADABLE = "UID could not be read for a recognized data UUID"
-    UNASSIGNED_IDENTIFIER = "Registered card is not assigned to a user"
-    MISSING_USER = "Registered card refers to a missing user"
+    DISABLED_USER = "Disabled user"
+    ENROLLED_UUID_REJECTED = "Wrong/missing UUID"
+    UID_UUID_MISMATCH = "UID/UUID mismatch"
+    UID_UNREADABLE = "UID unreadable"
+    UNASSIGNED_IDENTIFIER = "Unassigned card"
+    MISSING_USER = "User missing"
 
 
 @dataclass(frozen=True)
@@ -159,12 +156,8 @@ class AuthService:
                 uuid_identifier=None,
             )
 
-        legacy_anomalies = (
-            (CardAuthAnomaly.UNRECOGNIZED_DATA_UUID,) if scan.mifare_uuid else ()
-        )
         return self._card_result(
             uid_identifier,
-            anomalies=legacy_anomalies,
             uid_identifier=uid_identifier,
             uuid_identifier=None,
         )
@@ -192,8 +185,9 @@ class AuthService:
         success, user, authenticated_identifier, message = (
             self._authenticate_identifier(identifier)
         )
-        combined = list(anomalies)
-        self._append_user_anomaly(combined, identifier, user)
+        combined = [] if success else list(anomalies)
+        if not success:
+            self._append_user_anomaly(combined, identifier, user)
         return CardAuthResult(
             success,
             user,
