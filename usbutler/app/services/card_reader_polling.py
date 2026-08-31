@@ -6,7 +6,8 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from html import escape
+from typing import TYPE_CHECKING, Optional
 
 from app.config import settings
 from app.models.door_event import DoorEventType
@@ -18,6 +19,10 @@ from app.services.mifare_rotation_service import MifareRotationService
 from app.utils.masking import mask_identifier
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.services.auth_service import CardAuthResult
+    from app.services.notification_service import NotificationService
 
 
 @dataclass
@@ -38,6 +43,7 @@ class CardReaderPollingService:
         poll_interval: float = 1.0,
         default_door_id: int = 1,
         mifare_store: Optional[MifareBlockStore] = None,
+        notification_service: Optional["NotificationService"] = None,
     ):
         self._reader = card_reader_service
         self._door_control = door_control_service
@@ -45,6 +51,7 @@ class CardReaderPollingService:
         self.poll_interval = poll_interval
         self.default_door_id = default_door_id
         self._mifare_store = mifare_store or card_reader_service.mifare_store
+        self._notification_service = notification_service
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -167,7 +174,11 @@ class CardReaderPollingService:
         display_value = scan.identifier() or scan.uid or ""
         with self.session_factory() as services:
             auth = AuthService(services.users, services.identifiers)
-            success, user, identifier, message = auth.authenticate_card(scan)
+            decision = auth.authenticate_card(scan)
+            success = decision.success
+            user = decision.user
+            identifier = decision.identifier
+            message = decision.message
 
             if not success or not user or not identifier:
                 logger.info(
@@ -175,12 +186,14 @@ class CardReaderPollingService:
                     mask_identifier(display_value),
                     message,
                 )
+                self._notify_auth_anomalies(decision, scan)
                 return
 
             logger.info("Auth OK for '%s'", user.username)
             door = services.doors.get_by_id(self.default_door_id)
             if not door:
                 logger.error("Door %s not found", self.default_door_id)
+                self._notify_auth_anomalies(decision, scan)
                 return
 
             # Access is authorized before any best-effort database/card mutation.
@@ -188,6 +201,16 @@ class CardReaderPollingService:
             self._door_control.open_door_async(
                 door, user.username, DoorEventType.CARD, user.id
             )
+            self._notify_auth_anomalies(decision, scan)
+
+            try:
+                services.identifiers.mark_used(identifier.id)
+            except Exception:
+                services.db.rollback()
+                logger.exception(
+                    "Failed to record identifier use for '%s'; door access was preserved",
+                    user.username,
+                )
 
             if not scan.mifare_classic:
                 return
@@ -248,6 +271,61 @@ class CardReaderPollingService:
                         rotation.record_attempt(prepared.credential_id, str(exc))
                     except Exception:
                         logger.exception("Failed to persist MIFARE write failure")
+
+    def _notify_auth_anomalies(
+        self, decision: "CardAuthResult", scan: CardScanResult
+    ) -> None:
+        if not decision.anomalies:
+            return
+
+        try:
+            notification_service = self._notification_service
+            if notification_service is None:
+                from app.dependencies import get_registry
+
+                notification_service = get_registry().notification_service
+
+            access = "granted" if decision.success else "denied"
+            observed_identifier = (
+                scan.uid if scan.mifare_classic else scan.identifier() or scan.uid
+            )
+            lines = [
+                "⚠️ <b>Card access anomaly</b>",
+                "Reasons:",
+                *[f"• {escape(anomaly.value)}" for anomaly in decision.anomalies],
+                f"Access: <b>{access}</b>",
+                "Observed identifier: "
+                f"<code>{escape(mask_identifier(observed_identifier) or 'unreadable')}</code>",
+            ]
+
+            if scan.mifare_classic:
+                if decision.uuid_identifier:
+                    data_status = "recognized"
+                elif scan.mifare_uuid:
+                    data_status = "unrecognized"
+                elif scan.mifare_read_error:
+                    data_status = "unreadable"
+                else:
+                    data_status = "missing or invalid"
+                lines.append(f"Data UUID: <b>{data_status}</b>")
+
+            if decision.user:
+                lines.append(
+                    f"Authentication user: <b>{escape(decision.user.username)}</b>"
+                )
+
+            uid_user = decision.uid_identifier.user if decision.uid_identifier else None
+            uuid_user = (
+                decision.uuid_identifier.user if decision.uuid_identifier else None
+            )
+            if uid_user and (not decision.user or uid_user.id != decision.user.id):
+                lines.append(f"UID owner: <b>{escape(uid_user.username)}</b>")
+            if uuid_user and uid_user and uuid_user.id != uid_user.id:
+                lines.append(f"Data UUID owner: <b>{escape(uuid_user.username)}</b>")
+
+            notification_service.notify_security_alert_async("\n".join(lines))
+        except Exception:
+            logger.exception("Failed to send card access anomaly notification")
 
     def _restart_pcscd(self) -> None:
         try:

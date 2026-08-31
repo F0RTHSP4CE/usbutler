@@ -1,11 +1,13 @@
 """Pydantic schemas."""
 
 from app.schemas.user import (
-    UserCreate,
-    UserUpdate,
-    UserResponse,
-    UserWithIdentifiers,
+    MifareRotationBulkResponse,
+    MifareRotationBulkUpdate,
     TokenResponse,
+    UserCreate,
+    UserResponse,
+    UserUpdate,
+    UserWithIdentifiers,
 )
 from app.schemas.door import (
     DoorCreate,
@@ -30,6 +32,8 @@ __all__ = [
     "UserResponse",
     "UserWithIdentifiers",
     "TokenResponse",
+    "MifareRotationBulkUpdate",
+    "MifareRotationBulkResponse",
     "DoorCreate",
     "DoorUpdate",
     "DoorResponse",

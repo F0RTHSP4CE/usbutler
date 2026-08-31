@@ -82,3 +82,16 @@ class TestUserServiceTokens:
         svc.set_token_hash(user.id, hash_token(generate_token()))
         svc.delete(user.id)
         assert db.query(User).filter(User.id == user.id).first() is None
+
+    def test_set_mifare_rotation_for_all_users(self, db):
+        svc = UserService(db)
+        alice = svc.create(UserCreate(username="alice"))
+        bob = svc.create(UserCreate(username="bob", mifare_rotation_enabled=True))
+
+        assert svc.set_mifare_rotation_for_all(True) == 2
+        assert svc.get_by_id(alice.id).mifare_rotation_enabled is True
+        assert svc.get_by_id(bob.id).mifare_rotation_enabled is True
+
+        assert svc.set_mifare_rotation_for_all(False) == 2
+        assert svc.get_by_id(alice.id).mifare_rotation_enabled is False
+        assert svc.get_by_id(bob.id).mifare_rotation_enabled is False

@@ -4,11 +4,13 @@ from typing import List
 from fastapi import APIRouter, HTTPException, status
 from app.dependencies import ServicesDep
 from app.schemas.user import (
+    MifareRotationBulkResponse,
+    MifareRotationBulkUpdate,
+    TokenResponse,
     UserCreate,
     UserResponse,
     UserUpdate,
     UserWithIdentifiers,
-    TokenResponse,
 )
 from app.services.api_token_service import generate_token, hash_token
 
@@ -36,6 +38,17 @@ def create_user(user_data: UserCreate, s: ServicesDep):
         )
     user = s.users.create(user_data, _sources_to_csv(user_data.allowed_sources))
     return _user_response(user)
+
+
+@router.patch("/mifare-rotation/all", response_model=MifareRotationBulkResponse)
+def set_mifare_rotation_for_all(
+    data: MifareRotationBulkUpdate, s: ServicesDep
+) -> MifareRotationBulkResponse:
+    updated_users = s.users.set_mifare_rotation_for_all(data.enabled)
+    return MifareRotationBulkResponse(
+        enabled=data.enabled,
+        updated_users=updated_users,
+    )
 
 
 @router.get("/{user_id}", response_model=UserWithIdentifiers)

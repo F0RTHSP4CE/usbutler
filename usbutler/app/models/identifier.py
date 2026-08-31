@@ -25,6 +25,7 @@ class Identifier(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     value: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     type: Mapped[IdentifierType] = mapped_column(Enum(IdentifierType))
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     user_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("users.id"), nullable=True
     )
@@ -40,6 +41,30 @@ class Identifier(Base):
     __table_args__ = (
         Index("uq_identifiers_value_lower", func.lower(value), unique=True),
     )
+
+    @property
+    def mifare_confirmed_uuid_count(self) -> int:
+        credential = self.mifare_credential
+        if not credential:
+            return 0
+        return sum(
+            value.state == MifareUuidState.CONFIRMED for value in credential.uuid_values
+        )
+
+    @property
+    def mifare_enrolled(self) -> bool:
+        return self.mifare_confirmed_uuid_count > 0
+
+    @property
+    def mifare_has_pending_uuid(self) -> bool:
+        credential = self.mifare_credential
+        return bool(
+            credential
+            and any(
+                value.state == MifareUuidState.PENDING
+                for value in credential.uuid_values
+            )
+        )
 
 
 class MifareUuidState(str, enum.Enum):

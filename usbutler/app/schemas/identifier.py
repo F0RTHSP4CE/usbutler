@@ -27,6 +27,7 @@ class IdentifierResponse(BaseModel):
     value: str
     type: IdentifierType
     user_id: Optional[int] = None
+    last_used_at: Optional[datetime] = None
 
     @computed_field
     @property

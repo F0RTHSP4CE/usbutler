@@ -1,5 +1,6 @@
 """User schemas."""
 
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -26,6 +27,7 @@ class IdentifierBrief(BaseModel):
     id: int
     value: str
     type: str
+    last_used_at: Optional[datetime] = None
 
 
 class IdentifierLookupRequest(BaseModel):
@@ -48,3 +50,12 @@ class UserWithIdentifiers(UserResponse):
 class TokenResponse(BaseModel):
     token: str
     message: str = "Store this token securely. It will not be shown again."
+
+
+class MifareRotationBulkUpdate(BaseModel):
+    enabled: bool
+
+
+class MifareRotationBulkResponse(BaseModel):
+    enabled: bool
+    updated_users: int

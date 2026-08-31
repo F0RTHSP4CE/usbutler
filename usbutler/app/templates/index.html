@@ -2,6 +2,7 @@
 {% block title %}Users - USButler{% endblock %}
 
 {% macro mask_id(value) %}{{ value[:2] }}..{{ value[-2:] }}{% endmacro %}
+{% macro format_utc(value) %}{% if value %}{{ value.strftime('%Y-%m-%d %H:%M') }} UTC{% else %}never{% endif %}{% endmacro %}
 
 {% block content %}
 <div class="section">
@@ -68,6 +69,10 @@
     <div class="form-row">
         <input type="text" id="newUserInput" placeholder="username">
         <button onclick="createUser()">Add User</button>
+        <button onclick="setAllMifareRotation({{ 'false' if rolling_all_enabled|default(false) else 'true' }})"
+                {% if not users %}disabled{% endif %}>
+            {% if rolling_all_enabled|default(false) %}Disable{% else %}Enable{% endif %} rolling for all users
+        </button>
     </div>
     <br>
     <table>
@@ -82,7 +87,7 @@
             <th></th>
         </tr>
         {% for user in users %}
-        <tr>
+        <tr{% if user.status.value == 'inactive' %} class="user-inactive"{% endif %}>
             <td>{{ user.id }}</td>
             <td>{{ user.username }}</td>
             <td>
@@ -101,9 +106,26 @@
             </td>
             <td class="wrap">
                 {% for ident in user.identifiers %}
-                <span class="ident-item">
+                <span class="ident-item{% if ident.mifare_enrolled %} mifare-enrolled{% elif ident.mifare_has_pending_uuid %} mifare-pending{% endif %}">
                     {{ ident.type.value }}:{{ mask_id(ident.value) }}
                     <button onclick="deleteIdentifier({{ ident.id }})">[x]</button>
+                    {% if ident.type.value == 'UID' %}
+                    {% set credential = ident.mifare_credential %}
+                    <small class="ident-meta">
+                        {% if ident.mifare_enrolled %}
+                        enrolled · {{ ident.mifare_confirmed_uuid_count }} accepted UUID{% if ident.mifare_confirmed_uuid_count != 1 %}s{% endif %}
+                        {% if credential.last_verified_rotation_at %} · rotated {{ format_utc(credential.last_verified_rotation_at) }}{% endif %}
+                        {% if ident.mifare_has_pending_uuid %} · retry pending{% endif %}
+                        {% elif ident.mifare_has_pending_uuid %}
+                        enrollment pending
+                        {% else %}
+                        not enrolled
+                        {% endif %}
+                        {% if credential and credential.last_write_attempt_at %} · write tried {{ format_utc(credential.last_write_attempt_at) }}{% endif %}
+                        {% if credential and credential.last_write_error %} · {{ credential.last_write_error }}{% endif %}
+                    </small>
+                    {% endif %}
+                    <small class="ident-meta">Last used: {{ format_utc(ident.last_used_at) }}</small>
                 </span>
                 {% else %}
                 -
@@ -154,7 +176,17 @@
     async function updateStatus(userId, status) {
         try {
             await api('PATCH', `/users/${userId}`, { status });
-            showAlert('Updated');
+            location.reload();
+        } catch (e) { showAlert(e.message, 'danger'); }
+    }
+
+    async function setAllMifareRotation(enabled) {
+        const action = enabled ? 'Enable' : 'Disable';
+        if (!confirm(`${action} MIFARE rolling for all users?`)) return;
+        try {
+            const result = await api('PATCH', '/users/mifare-rotation/all', { enabled });
+            showAlert(`${action}d rolling for ${result.updated_users} users`);
+            location.reload();
         } catch (e) { showAlert(e.message, 'danger'); }
     }
 

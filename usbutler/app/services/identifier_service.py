@@ -1,5 +1,6 @@
 """Identifier service for database operations."""
 
+from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import func, select
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models.identifier import Identifier, IdentifierType
 from app.schemas.identifier import IdentifierCreate, IdentifierUpdate
+from app.utils.time import utcnow
 
 
 class IdentifierService:
@@ -84,3 +86,12 @@ class IdentifierService:
         self.db.commit()
         self.db.refresh(identifier)
         return identifier
+
+    def mark_used(self, identifier_id: int, used_at: Optional[datetime] = None) -> bool:
+        """Record a successful authentication for an identifier."""
+        identifier = self.db.get(Identifier, identifier_id)
+        if not identifier:
+            return False
+        identifier.last_used_at = used_at or utcnow()
+        self.db.commit()
+        return True

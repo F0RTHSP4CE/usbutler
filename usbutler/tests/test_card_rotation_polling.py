@@ -1,13 +1,15 @@
 """Integration of authorization, door actuation, and best-effort rotation."""
 
 from contextlib import contextmanager
+from datetime import datetime
 from types import SimpleNamespace
 
 from app.models.door import Door
 from app.models.identifier import IdentifierType, MifareUuidState, MifareUuidValue
 from app.routers.ui import templates
 from app.schemas.identifier import IdentifierCreate
-from app.schemas.user import UserCreate
+from app.schemas.user import UserCreate, UserUpdate
+from app.models.user import UserStatus
 from app.services.card_reader import CardReaderService, CardScanResult
 from app.services.card_reader_polling import CardReaderPollingService
 from app.services.door_service import DoorService
@@ -24,6 +26,17 @@ class FakeDoorControl:
     def open_door_async(self, *args, **kwargs):
         self.events.append("open")
         return True
+
+
+class FakeNotifications:
+    def __init__(self, events=None):
+        self.events = events
+        self.messages = []
+
+    def notify_security_alert_async(self, message):
+        if self.events is not None:
+            self.events.append("notify")
+        self.messages.append(message)
 
 
 class FakeMifareStore:
@@ -123,6 +136,7 @@ def test_verified_rewrite_is_confirmed_after_door_submission(db):
     value = db.query(MifareUuidValue).one()
     assert value.state == MifareUuidState.CONFIRMED
     assert identifier.mifare_credential.last_verified_rotation_at is not None
+    assert identifier.last_used_at is not None
 
 
 def test_later_scan_of_pending_target_confirms_without_another_write(db):
@@ -179,12 +193,141 @@ def test_global_kill_switch_stops_writes_without_blocking_access(db, monkeypatch
     assert db.query(MifareUuidValue).count() == 0
 
 
+def test_last_used_persistence_failure_does_not_block_access(db, monkeypatch):
+    _, identifier, services = setup_access(db, enabled=False)
+
+    def fail_mark_used(*args, **kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(IdentifierService, "mark_used", fail_mark_used)
+    events = []
+    polling = CardReaderPollingService(
+        card_reader_service=UnusedReaderService(),
+        door_control_service=FakeDoorControl(events),
+        session_factory=services,
+    )
+
+    polling._authenticate(scan())
+
+    assert events == ["open"]
+    assert identifier.last_used_at is None
+
+
+def test_unknown_card_sends_masked_security_notification(db):
+    _, _, services = setup_access(db)
+    events = []
+    notifications = FakeNotifications(events)
+    polling = CardReaderPollingService(
+        card_reader_service=UnusedReaderService(),
+        door_control_service=FakeDoorControl(events),
+        session_factory=services,
+        notification_service=notifications,
+    )
+
+    polling._authenticate(
+        CardScanResult(
+            uid="DEADBEEF",
+            mifare_classic=True,
+            identifiers={"identifier": {"type": "UID", "value": "DEADBEEF"}},
+        )
+    )
+
+    assert events == ["notify"]
+    assert len(notifications.messages) == 1
+    assert "Unknown card" in notifications.messages[0]
+    assert "DE..EF" in notifications.messages[0]
+
+
+def test_disabled_user_sends_notification_and_does_not_open(db):
+    user, _, services = setup_access(db)
+    UserService(db).update(user.id, UserUpdate(status=UserStatus.INACTIVE))
+    events = []
+    notifications = FakeNotifications(events)
+    polling = CardReaderPollingService(
+        card_reader_service=UnusedReaderService(),
+        door_control_service=FakeDoorControl(events),
+        session_factory=services,
+        notification_service=notifications,
+    )
+
+    polling._authenticate(scan())
+
+    assert events == ["notify"]
+    assert "Disabled user attempted access" in notifications.messages[0]
+    assert "alice" in notifications.messages[0]
+    assert "Access: <b>denied</b>" in notifications.messages[0]
+
+
+def test_enrolled_card_with_wrong_uuid_sends_notification(db):
+    _, identifier, services = setup_access(db)
+    rotation = MifareRotationService(db)
+    prepared = rotation.prepare_write(identifier.id)
+    rotation.confirm_observed(identifier.id, prepared.target_uuid, 3)
+    wrong_uuid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    notifications = FakeNotifications()
+    events = []
+    polling = CardReaderPollingService(
+        card_reader_service=UnusedReaderService(),
+        door_control_service=FakeDoorControl(events),
+        session_factory=services,
+        notification_service=notifications,
+    )
+
+    polling._authenticate(scan(data_uuid=wrong_uuid))
+
+    assert events == []
+    assert "without a recognized current or recent data UUID" in (
+        notifications.messages[0]
+    )
+    assert wrong_uuid not in notifications.messages[0]
+    assert "Data UUID: <b>unrecognized</b>" in notifications.messages[0]
+    assert identifier.last_used_at is None
+
+
+def test_uid_uuid_owner_mismatch_opens_then_sends_one_notification(db):
+    _, identifier, services = setup_access(db)
+    users = UserService(db)
+    identifiers = IdentifierService(db)
+    bob = users.create(UserCreate(username="bob"))
+    identifiers.create(
+        IdentifierCreate(value="DEADBEEF", type=IdentifierType.UID, user_id=bob.id)
+    )
+    rotation = MifareRotationService(db)
+    prepared = rotation.prepare_write(identifier.id)
+    rotation.confirm_observed(identifier.id, prepared.target_uuid, 3)
+    events = []
+    notifications = FakeNotifications(events)
+    polling = CardReaderPollingService(
+        card_reader_service=UnusedReaderService(),
+        door_control_service=FakeDoorControl(events),
+        session_factory=services,
+        notification_service=notifications,
+    )
+    mismatched_scan = scan(data_uuid=prepared.target_uuid)
+    mismatched_scan.uid = "DEADBEEF"
+    mismatched_scan.identifiers["identifier"]["value"] = "DEADBEEF"
+
+    polling._authenticate(mismatched_scan)
+
+    assert events == ["open", "notify"]
+    message = notifications.messages[0]
+    assert "does not correspond" in message
+    assert "Access: <b>granted</b>" in message
+    assert "Authentication user: <b>alice</b>" in message
+    assert "UID owner: <b>bob</b>" in message
+    assert "Data UUID owner: <b>alice</b>" in message
+    assert prepared.target_uuid not in message
+
+
 def test_admin_ui_has_opt_in_checkbox_without_raw_uuid_history(db):
     _, identifier, _ = setup_access(db, enabled=True)
     prepared = MifareRotationService(db).prepare_write(identifier.id)
+    MifareRotationService(db).confirm_observed(identifier.id, prepared.target_uuid, 3)
+    IdentifierService(db).mark_used(identifier.id, datetime(2026, 8, 31, 12, 34))
 
     html = templates.env.get_template("index.html").render(
         users=UserService(db).get_all(),
+        rolling_all_enabled=True,
         last_scan=None,
         last_scan_identifier=None,
         auth_enabled=False,
@@ -193,7 +336,27 @@ def test_admin_ui_has_opt_in_checkbox_without_raw_uuid_history(db):
     assert "MIFARE Rotation" in html
     assert "mifare_rotation_enabled" in html
     assert "checked" in html
+    assert "Disable rolling for all users" in html
+    assert "/users/mifare-rotation/all" in html
+    assert "mifare-enrolled" in html
+    assert "enrolled · 1 accepted UUID" in html
+    assert "Last used: 2026-08-31 12:34 UTC" in html
     assert prepared.target_uuid not in html
+
+
+def test_admin_ui_grays_out_inactive_user_row(db):
+    user, _, _ = setup_access(db)
+    UserService(db).update(user.id, UserUpdate(status=UserStatus.INACTIVE))
+
+    html = templates.env.get_template("index.html").render(
+        users=UserService(db).get_all(),
+        rolling_all_enabled=False,
+        last_scan=None,
+        last_scan_identifier=None,
+        auth_enabled=False,
+    )
+
+    assert '<tr class="user-inactive">' in html
 
 
 class PollingReader:

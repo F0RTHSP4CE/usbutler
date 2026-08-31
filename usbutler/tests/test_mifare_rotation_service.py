@@ -9,7 +9,7 @@ from app.models.identifier import IdentifierType, MifareUuidState, MifareUuidVal
 from app.models.user import UserStatus
 from app.schemas.identifier import IdentifierCreate
 from app.schemas.user import UserCreate, UserUpdate
-from app.services.auth_service import AuthService
+from app.services.auth_service import AuthService, CardAuthAnomaly
 from app.services.card_reader import CardScanResult
 from app.services.identifier_service import IdentifierService
 from app.services.mifare_rotation_service import MifareRotationService
@@ -120,11 +120,13 @@ def test_legacy_uid_authenticates_until_first_confirmation(db):
     )
     assert pending_result[0] is True
     assert pending_result[2].id == identifier.id
+    assert pending_result.anomalies == (CardAuthAnomaly.UID_UUID_MISMATCH,)
 
     MifareRotationService(db).confirm_observed(identifier.id, prepared.target_uuid, 3)
     strict_result = auth.authenticate_card(mifare_scan(data_uuid=None))
     assert strict_result[0] is False
     assert "requires a recognized data UUID" in strict_result[3]
+    assert strict_result.anomalies == (CardAuthAnomaly.ENROLLED_UUID_REJECTED,)
 
 
 def test_known_uuid_wins_over_hardware_uid(db):
@@ -139,6 +141,7 @@ def test_known_uuid_wins_over_hardware_uid(db):
 
     assert result[0] is True
     assert result[2].id == identifier.id
+    assert result.anomalies == (CardAuthAnomaly.UID_UUID_MISMATCH,)
 
 
 def test_previous_confirmed_uuid_remains_accepted(db):
@@ -195,6 +198,40 @@ def test_inactive_user_is_rejected_for_known_uuid(db):
     )
     assert result[0] is False
     assert result[3] == "User is inactive"
+    assert result.anomalies == (CardAuthAnomaly.DISABLED_USER,)
+
+
+def test_unknown_card_is_classified_for_notification(db):
+    users = UserService(db)
+    identifiers = IdentifierService(db)
+
+    result = AuthService(users, identifiers).authenticate_card(
+        mifare_scan(uid="DEADBEEF")
+    )
+
+    assert result.success is False
+    assert result.anomalies == (CardAuthAnomaly.UNKNOWN_CARD,)
+
+
+def test_known_uuid_reports_different_registered_uid_owner(db):
+    users, identifiers, alice, identifier = create_fob(db)
+    bob = users.create(UserCreate(username="bob"))
+    bob_identifier = identifiers.create(
+        IdentifierCreate(value="DEADBEEF", type=IdentifierType.UID, user_id=bob.id)
+    )
+    rotation = MifareRotationService(db)
+    prepared = rotation.prepare_write(identifier.id)
+    rotation.confirm_observed(identifier.id, prepared.target_uuid, 3)
+
+    result = AuthService(users, identifiers).authenticate_card(
+        mifare_scan(uid=bob_identifier.value, data_uuid=prepared.target_uuid)
+    )
+
+    assert result.success is True
+    assert result.user.id == alice.id
+    assert result.uid_identifier.id == bob_identifier.id
+    assert result.uuid_identifier.id == identifier.id
+    assert result.anomalies == (CardAuthAnomaly.UID_UUID_MISMATCH,)
 
 
 def test_non_mifare_pan_authentication_is_unchanged(db):

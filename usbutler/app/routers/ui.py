@@ -64,6 +64,9 @@ async def index(
     s: ServicesDepUI,
 ):
     users = s.users.get_all()
+    rolling_all_enabled = bool(users) and all(
+        user.mifare_rotation_enabled for user in users
+    )
     last_scan, last_scan_identifier = None, None
     if s.card_reader_polling:
         last_scan = s.card_reader_polling.get_last_scan()
@@ -75,6 +78,7 @@ async def index(
         {
             "request": request,
             "users": users,
+            "rolling_all_enabled": rolling_all_enabled,
             "last_scan": last_scan,
             "last_scan_identifier": last_scan_identifier,
             "auth_enabled": bool(settings.ADMIN_PASSWORD),

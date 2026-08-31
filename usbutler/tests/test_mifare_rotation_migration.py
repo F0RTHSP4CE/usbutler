@@ -33,7 +33,7 @@ def test_fresh_database_migrates_to_data_rotation_schema(tmp_path, monkeypatch):
     identifier_columns = {
         column["name"] for column in inspector.get_columns("identifiers")
     }
-    assert identifier_columns == {"id", "value", "type", "user_id"}
+    assert identifier_columns == {"id", "value", "type", "user_id", "last_used_at"}
 
     with engine.begin() as connection:
         connection.execute(
@@ -52,7 +52,7 @@ def test_fresh_database_migrates_to_data_rotation_schema(tmp_path, monkeypatch):
             connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-            == "0002_mifare_data_rotation"
+            == "0003_identifier_last_used"
         )
 
 
@@ -94,6 +94,12 @@ def test_unversioned_legacy_database_is_stamped_and_preserved(tmp_path, monkeypa
                 text("SELECT value FROM identifiers WHERE id = 1")
             ).scalar_one()
             == "01:02:03:04"
+        )
+        assert (
+            connection.execute(
+                text("SELECT last_used_at FROM identifiers WHERE id = 1")
+            ).scalar_one()
+            is None
         )
         assert (
             connection.execute(
