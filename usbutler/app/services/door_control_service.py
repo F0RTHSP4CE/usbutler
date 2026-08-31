@@ -1,12 +1,14 @@
 """Door control service for GPIO operations with button monitoring."""
 
+import importlib.util
 import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import timedelta
 from contextlib import AbstractContextManager
-from typing import TYPE_CHECKING, Callable, Dict, Generator, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 from app.config import settings
 from app.models.door import Door
@@ -21,6 +23,38 @@ _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="door_")
 
 # Type alias for session factory
 SessionFactory = Callable[[], AbstractContextManager["Services"]]
+
+
+@dataclass(frozen=True)
+class DoorSnapshot:
+    """Values needed by a door job after its database session has closed."""
+
+    id: int
+    name: str
+    gpio_pin: int
+    gpio_active_low: bool
+    open_hold_time: float
+
+    @classmethod
+    def from_model(cls, door: Door) -> "DoorSnapshot":
+        # Read every ORM attribute on the caller's thread while its session is
+        # still usable. Rotation may roll that session back immediately after
+        # this job is submitted, which expires SQLAlchemy model instances.
+        return cls(
+            id=door.id,
+            name=door.name,
+            gpio_pin=door.gpio_pin,
+            gpio_active_low=door.gpio_active_low,
+            open_hold_time=door.open_hold_time,
+        )
+
+
+def _log_async_failure(future) -> None:
+    """Make background door failures visible instead of trapping them silently."""
+    try:
+        future.result()
+    except Exception:
+        logger.exception("Unhandled background door operation failure")
 
 
 class DoorControlService:
@@ -44,13 +78,10 @@ class DoorControlService:
         self._pin_released: Dict[int, threading.Event] = {}
 
     def _check_gpio(self) -> bool:
-        try:
-            import gpiod
-
-            return True
-        except ImportError:
+        if importlib.util.find_spec("gpiod") is None:
             logger.warning("gpiod not available, GPIO will be simulated")
             return False
+        return True
 
     def _persist_event(
         self,
@@ -81,7 +112,9 @@ class DoorControlService:
         on_behalf_of: Optional[str] = None,
     ):
         """Persist event asynchronously for use in event loops/monitoring."""
-        _executor.submit(self._persist_event, door_id, event_type, username, user_id, on_behalf_of)
+        _executor.submit(
+            self._persist_event, door_id, event_type, username, user_id, on_behalf_of
+        )
 
     def get_last_door_event(self) -> Optional[dict]:
         """Get the most recent door event from database."""
@@ -256,7 +289,7 @@ class DoorControlService:
 
     def _open_door_sync(
         self,
-        door: Door,
+        door: DoorSnapshot,
         username: Optional[str] = None,
         event_type: DoorEventType = DoorEventType.API,
         user_id: Optional[int] = None,
@@ -273,7 +306,9 @@ class DoorControlService:
             self._pin_in_output[pin] = True
             if released:
                 if not released.wait(timeout=5.0):
-                    logger.error(f"Timeout waiting for button monitor to release pin {pin}")
+                    logger.error(
+                        f"Timeout waiting for button monitor to release pin {pin}"
+                    )
                     success = False
                 else:
                     success = (
@@ -296,10 +331,12 @@ class DoorControlService:
                 lock.release()
 
         self._persist_event(door.id, event_type, username, user_id, on_behalf_of)
-        self.notification_service.notify_door_opened_async(door.name, username, success, on_behalf_of)
+        self.notification_service.notify_door_opened_async(
+            door.name, username, success, on_behalf_of
+        )
         return success
 
-    def _control_gpio(self, door: Door) -> bool:
+    def _control_gpio(self, door: DoorSnapshot) -> bool:
         import gpiod
         from gpiod.line import Direction, Value
 
@@ -320,7 +357,7 @@ class DoorControlService:
             logger.error(f"GPIO error for '{door.name}': {e}")
             return False
 
-    def _simulate_gpio(self, door: Door) -> bool:
+    def _simulate_gpio(self, door: DoorSnapshot) -> bool:
         logger.info(f"[SIM] GPIO {door.gpio_pin} active")
         time.sleep(door.open_hold_time)
         logger.info(f"[SIM] GPIO {door.gpio_pin} inactive")
@@ -334,7 +371,16 @@ class DoorControlService:
         user_id: Optional[int] = None,
         on_behalf_of: Optional[str] = None,
     ) -> bool:
-        _executor.submit(self._open_door_sync, door, username, event_type, user_id, on_behalf_of)
+        snapshot = DoorSnapshot.from_model(door)
+        future = _executor.submit(
+            self._open_door_sync,
+            snapshot,
+            username,
+            event_type,
+            user_id,
+            on_behalf_of,
+        )
+        future.add_done_callback(_log_async_failure)
         return True
 
     def open_door_blocking(
@@ -345,7 +391,13 @@ class DoorControlService:
         user_id: Optional[int] = None,
         on_behalf_of: Optional[str] = None,
     ) -> bool:
-        return self._open_door_sync(door, username, event_type, user_id, on_behalf_of)
+        return self._open_door_sync(
+            DoorSnapshot.from_model(door),
+            username,
+            event_type,
+            user_id,
+            on_behalf_of,
+        )
 
     def open_door_for_card(self, door: Door, username: Optional[str] = None) -> bool:
         return self.open_door_async(door, username, DoorEventType.CARD)
